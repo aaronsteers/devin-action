@@ -11,8 +11,8 @@ on:
         description: "Issue Number (Optional)"
         type: string
         required: false
-      runbook-id:
-        description: "Runbook/Playbook ID (Optional)"
+      playbook-macro:
+        description: "Playbook macro (Optional) - should start with '!' (e.g., !my_playbook)"
         type: string
         required: false
       prompt-text:
@@ -34,7 +34,7 @@ jobs:
         with:
           comment-id: ${{ github.event.inputs.comment-id }}
           issue-number: ${{ github.event.inputs.issue-number }}
-          runbook-id: ${{ github.event.inputs.runbook-id }}
+          playbook-macro: ${{ github.event.inputs.playbook-macro }}
           prompt-text: ${{ github.event.inputs.prompt-text }}
           devin-token: ${{ secrets.DEVIN_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

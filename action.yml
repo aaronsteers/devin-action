@@ -12,8 +12,8 @@ inputs:
   issue-number:
     description: "Issue number (optional, for context)"
     required: false
-  runbook-id:
-    description: "Runbook/Playbook ID (optional, for structured workflows)"
+  playbook-macro:
+    description: "Playbook macro (optional, for structured workflows) - should start with '!' (e.g., !my_playbook)"
     required: false
   prompt-text:
     description: "Additional prompt text (optional)"
@@ -74,9 +74,9 @@ runs:
           prompt_parts+=("Issue URL: ${issue_url}")
         fi
         
-        # Add runbook reference if runbook-id is provided
-        if [[ -n "${{ inputs.runbook-id }}" ]]; then
-          prompt_parts+=("Please use runbook/playbook ID: ${{ inputs.runbook-id }}")
+        # Add playbook macro reference if playbook-macro is provided
+        if [[ -n "${{ inputs.playbook-macro }}" ]]; then
+          prompt_parts+=("Please use playbook macro: ${{ inputs.playbook-macro }}")
         fi
         
         # Add custom prompt text if provided
@@ -86,7 +86,7 @@ runs:
         
         # Combine all prompt parts
         if [[ ${#prompt_parts[@]} -eq 0 ]]; then
-          echo "Error: No prompt content provided. At least one of comment-id, issue-number, runbook-id, or prompt-text must be specified."
+          echo "Error: No prompt content provided. At least one of comment-id, issue-number, playbook-macro, or prompt-text must be specified."
           exit 1
         fi
         

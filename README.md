@@ -7,7 +7,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 - ✅ Creates Devin.ai sessions with custom prompts
 - ✅ Supports triggering via slash commands in PR and issue comments
 - ✅ Automatically gathers context from GitHub issues and comments
-- ✅ Supports runbook/playbook integration
+- ✅ Supports playbook macro integration
 - ✅ Posts status updates and session links as comments
 - ✅ Flexible input handling - use any combination of inputs
 
@@ -17,7 +17,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 |----------------|-----------------------------------------------------------------------------|----------|----------|
 | `comment-id`   | Comment ID for context and reply chaining                                  | false    |          |
 | `issue-number` | Issue number for context gathering                                          | false    |          |
-| `runbook-id`   | Runbook/Playbook ID for structured workflows                               | false    |          |
+| `playbook-macro` | Playbook macro for structured workflows - should start with '!' (e.g., !my_playbook) | false    |          |
 | `prompt-text`  | Additional custom prompt text                                               | false    |          |
 | `devin-token`  | Devin API Token (required for authentication)                              | true     |          |
 | `github-token` | GitHub Token (required for posting comments and accessing repo context)    | false    |          |
@@ -52,13 +52,13 @@ This action is designed to work with slash commands in PR comments. The action w
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-### With Runbook Integration
+### With Playbook Macro Integration
 
 ```yaml
-- name: Run Devin with Runbook
+- name: Run Devin with Playbook Macro
   uses: aaronsteers/devin-action@v1
   with:
-    runbook-id: "fix-ci-failures"
+    playbook-macro: "!fix-ci-failures"
     issue-number: ${{ github.event.issue.number }}
     prompt-text: "Additional context about the specific failure"
     devin-token: ${{ secrets.DEVIN_TOKEN }}
@@ -71,7 +71,7 @@ The action intelligently builds prompts by combining available context:
 
 1. **Comment Context**: If `comment-id` is provided, includes the comment body and author
 2. **Issue Context**: If `issue-number` is provided, includes issue title, description, and author  
-3. **Runbook Reference**: If `runbook-id` is provided, instructs Devin to use the specified runbook
+3. **Playbook Macro Reference**: If `playbook-macro` is provided, instructs Devin to use the specified playbook macro
 4. **Custom Prompt**: If `prompt-text` is provided, includes additional custom instructions
 
 All provided inputs are concatenated to create a comprehensive prompt for Devin.

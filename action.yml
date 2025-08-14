@@ -67,13 +67,11 @@ runs:
           echo "Fetching issue context..."
           ISSUE_JSON=$(gh api repos/${{ github.repository }}/issues/${{ inputs.issue-number }})
           issue_title=$(echo $ISSUE_JSON | jq -r .title)
-          issue_body=$(echo $ISSUE_JSON | jq -r .body)
           issue_author=$(echo $ISSUE_JSON | jq -r .user.login)
+          issue_url="https://github.com/${{ github.repository }}/issues/${{ inputs.issue-number }}"
           
           prompt_parts+=("Issue #${{ inputs.issue-number }} by @${issue_author}: ${issue_title}")
-          if [[ "$issue_body" != "null" && -n "$issue_body" ]]; then
-            prompt_parts+=("Issue description: ${issue_body}")
-          fi
+          prompt_parts+=("Issue URL: ${issue_url}")
         fi
         
         # Add runbook reference if runbook-id is provided

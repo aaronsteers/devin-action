@@ -1,0 +1,34 @@
+name: AI Help Command
+
+on:
+  workflow_dispatch:
+    inputs:
+      comment-id:
+        description: "Comment ID (Optional)"
+        type: string
+        required: false
+      issue-number:
+        description: "Issue Number (Optional)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-help:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Devin AI Help
+        uses: aaronsteers/devin-action@main
+        with:
+          comment-id: ${{ github.event.inputs.comment-id }}
+          issue-number: ${{ github.event.inputs.issue-number }}
+          prompt-text: "Please provide help and guidance for this issue/comment. Explain the problem, suggest solutions, and provide implementation guidance as appropriate."
+          devin-token: ${{ secrets.DEVIN_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          start-message: "💡 **Getting AI assistance...**"
+          success-message: "📚 **AI help session completed!**"
+          failure-message: "❌ **AI help session failed.**"

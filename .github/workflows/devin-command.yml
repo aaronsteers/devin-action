@@ -1,0 +1,40 @@
+name: On-Demand Devin AI Task
+
+on:
+  workflow_dispatch:
+    inputs:
+      comment-id:
+        description: "Comment ID (Optional)"
+        type: string
+        required: false
+      issue-number:
+        description: "Issue Number (Optional)"
+        type: string
+        required: false
+      runbook-id:
+        description: "Runbook/Playbook ID (Optional)"
+        type: string
+        required: false
+      prompt-text:
+        description: "Custom prompt text (Optional)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  run-devin-command:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Devin AI Action
+        uses: aaronsteers/devin-action@main
+        with:
+          comment-id: ${{ github.event.inputs.comment-id }}
+          issue-number: ${{ github.event.inputs.issue-number }}
+          runbook-id: ${{ github.event.inputs.runbook-id }}
+          prompt-text: ${{ github.event.inputs.prompt-text }}
+          devin-token: ${{ secrets.DEVIN_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

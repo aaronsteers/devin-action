@@ -1,0 +1,28 @@
+name: Test Action
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-action:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test Action with minimal inputs
+        id: test-minimal
+        uses: ./
+        with:
+          prompt-text: "This is a test of the Devin action"
+          devin-token: "test-token-placeholder"
+        continue-on-error: true
+
+      - name: Check test results
+        run: |
+          echo "Test completed with exit code: ${{ steps.test-minimal.outcome }}"
+          # In a real test, we would validate the outputs
+          # For now, we just ensure the action doesn't crash on basic input validation

@@ -41,7 +41,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 
 ### Slash Command Example
 
-This action is designed to work with slash commands in issue and issue and PR comments. The action will automatically gather context from the comment and/or issue.
+This action is designed to work with slash commands in issue and PR comments. The action will automatically gather context from the comment and/or issue.
 
 ```yaml
 - name: Run Devin from Comment

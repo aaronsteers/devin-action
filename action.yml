@@ -197,9 +197,7 @@ runs:
         body: |
           > ${{ inputs.success-message || '✅ **Devin AI session created successfully!**' }}
           >
-          > 🔗 **Session Details:**
-          > - Session ID: `${{ steps.devin-session.outputs.session-id }}`
-          > - Session URL: ${{ steps.devin-session.outputs.session-url }}
+          > 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
           >
 
     - name: Append failure comment

@@ -34,7 +34,7 @@ jobs:
           commands: |
             devin
             ai-fix
-            ai-help
+            ai-ask
 
           static-args: |
             comment-id=${{ github.event.comment.id }}

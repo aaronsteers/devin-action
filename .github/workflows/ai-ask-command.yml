@@ -18,7 +18,7 @@ permissions:
   issues: write
 
 jobs:
-  ai-help:
+  ai-ask:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

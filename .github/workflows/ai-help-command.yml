@@ -35,5 +35,3 @@ jobs:
           devin-token: ${{ secrets.DEVIN_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           start-message: "💡 **Getting AI assistance...**"
-          success-message: "📚 **AI help session completed!**"
-          failure-message: "❌ **AI help session failed.**"

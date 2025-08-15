@@ -138,19 +138,23 @@ runs:
         
         echo "Creating Devin session..."
         
-        # Prepare the API request payload
-        cat > devin_request.json << 'EOF'
-        {
-          "prompt": "${{ steps.build-prompt.outputs.prompt }}",
-          "repository_url": "https://github.com/${{ github.repository }}",
-          "branch": "${{ github.ref_name }}",
-          "metadata": {
-            "github_run_id": "${{ github.run_id }}",
-            "github_repository": "${{ github.repository }}",
-            "triggered_by": "github_action"
-          }
-        }
-        EOF
+        # Prepare the API request payload using jq to properly escape JSON
+        jq -n \
+          --arg prompt "${{ steps.build-prompt.outputs.prompt }}" \
+          --arg repo_url "https://github.com/${{ github.repository }}" \
+          --arg branch "${{ github.ref_name }}" \
+          --arg run_id "${{ github.run_id }}" \
+          --arg repository "${{ github.repository }}" \
+          '{
+            "prompt": $prompt,
+            "repository_url": $repo_url,
+            "branch": $branch,
+            "metadata": {
+              "github_run_id": $run_id,
+              "github_repository": $repository,
+              "triggered_by": "github_action"
+            }
+          }' > devin_request.json
         
         echo "::group::📤 Devin API Request"
         cat devin_request.json | jq

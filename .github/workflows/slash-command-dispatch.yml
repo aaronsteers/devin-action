@@ -1,0 +1,44 @@
+name: Slash Command Dispatch
+on:
+  issue_comment:
+    types: [created]
+jobs:
+  slashCommandDispatch:
+    name: Dispatch
+    runs-on: ubuntu-24.04
+    steps:
+      # Use pre-made action (handles private repo auth):
+      - name: Get PR Info
+        if: ${{ github.event.issue.pull_request }}
+        id: pr-info
+        uses: cloudposse-github-actions/get-pr@v2.0.0
+        with:
+          id: ${{ github.event.issue.number }}
+
+      - name: Slash Command Dispatch (Workflow)
+        id: scd
+        uses: peter-evans/slash-command-dispatch@v3
+        with:
+          token: ${{ github.token }}
+          permission: write
+          dispatch-type: workflow
+          issue-type: both
+
+          commands: |
+            devin
+            ai-fix
+            ai-help
+
+          static-args: |
+            repo=${{ fromJSON(steps.pr-info.outputs.json).head.repo.full_name || github.repository }}
+            gitref=${{ fromJSON(steps.pr-info.outputs.json).head.ref }}
+            comment-id=${{ github.event.comment.id }}
+            issue-number=${{ github.event.issue.pull_request != null && github.event.issue.number || github.event.issue.number }}
+
+      - name: Edit comment with error message
+        if: steps.scd.outputs.error-message
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          comment-id: ${{ github.event.comment.id }}
+          body: |
+            > Error: ${{ steps.scd.outputs.error-message }}

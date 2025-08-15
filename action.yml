@@ -1,0 +1,210 @@
+name: Devin AI Action
+description: |
+  Creates a new Devin.ai session with a given prompt or playbook. Designed to be used in slash commands and can post status updates back to PR comments.
+branding:
+  icon: cpu
+  color: purple
+
+inputs:
+  comment-id:
+    description: "Comment ID (optional, for reply chaining and context)"
+    required: false
+  issue-number:
+    description: "Issue number (optional, for context)"
+    required: false
+  playbook-macro:
+    description: "Playbook macro (optional, for structured workflows) - should start with '!' (e.g., !my_playbook)"
+    required: false
+  prompt-text:
+    description: "Additional prompt text (optional)"
+    required: false
+  devin-token:
+    description: "Devin API Token (required for authentication)"
+    required: true
+  github-token:
+    description: "GitHub Token (required for posting comments and accessing repo context)"
+    required: false
+  start-message:
+    description: "Message to include in the start comment"
+    required: false
+    default: ""
+  success-message:
+    description: "Message to include in the success comment"
+    required: false
+    default: ""
+  failure-message:
+    description: "Message to include in the failure comment"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Build Devin prompt
+      id: build-prompt
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        
+        # Initialize prompt components
+        prompt_parts=()
+        
+        # Add comment context if comment-id is provided
+        if [[ -n "${{ inputs.comment-id }}" ]]; then
+          echo "Fetching comment context..."
+          COMMENT_JSON=$(gh api repos/${{ github.repository }}/issues/comments/${{ inputs.comment-id }})
+          comment_body=$(echo $COMMENT_JSON | jq -r .body)
+          comment_author=$(echo $COMMENT_JSON | jq -r .user.login)
+          
+          prompt_parts+=("Comment from @${comment_author}: ${comment_body}")
+        fi
+        
+        # Add issue context if issue-number is provided
+        if [[ -n "${{ inputs.issue-number }}" ]]; then
+          echo "Fetching issue context..."
+          ISSUE_JSON=$(gh api repos/${{ github.repository }}/issues/${{ inputs.issue-number }})
+          issue_title=$(echo $ISSUE_JSON | jq -r .title)
+          issue_author=$(echo $ISSUE_JSON | jq -r .user.login)
+          issue_url="https://github.com/${{ github.repository }}/issues/${{ inputs.issue-number }}"
+          
+          prompt_parts+=("Issue #${{ inputs.issue-number }} by @${issue_author}: ${issue_title}")
+          prompt_parts+=("Issue URL: ${issue_url}")
+        fi
+        
+        # Add playbook macro reference if playbook-macro is provided
+        if [[ -n "${{ inputs.playbook-macro }}" ]]; then
+          prompt_parts+=("Please use playbook macro: ${{ inputs.playbook-macro }}")
+        fi
+        
+        # Add custom prompt text if provided
+        if [[ -n "${{ inputs.prompt-text }}" ]]; then
+          prompt_parts+=("${{ inputs.prompt-text }}")
+        fi
+        
+        # Combine all prompt parts
+        if [[ ${#prompt_parts[@]} -eq 0 ]]; then
+          echo "Error: No prompt content provided. At least one of comment-id, issue-number, playbook-macro, or prompt-text must be specified."
+          exit 1
+        fi
+        
+        # Join prompt parts with newlines
+        final_prompt=""
+        for part in "${prompt_parts[@]}"; do
+          if [[ -n "$final_prompt" ]]; then
+            final_prompt="${final_prompt}\n\n${part}"
+          else
+            final_prompt="$part"
+          fi
+        done
+        
+        echo "Final prompt built successfully"
+        echo "::group::📝 Devin Prompt Preview"
+        echo -e "$final_prompt"
+        echo "::endgroup::"
+        
+        # Save prompt to output (escape for JSON)
+        echo "prompt<<EOF" >> $GITHUB_OUTPUT
+        echo -e "$final_prompt" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Generate run link
+      id: vars
+      shell: bash
+      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+
+    - name: Post job start comment
+      if: inputs.comment-id || inputs.issue-number
+      uses: peter-evans/create-or-update-comment@v4
+      id: comment-start
+      with:
+        comment-id: ${{ inputs.comment-id }}
+        issue-number: ${{ inputs.issue-number }}
+        body: |
+          > ${{ inputs.start-message || '🤖 **Starting Devin AI session...**' }}
+          >
+          > [Link to job logs.](${{ steps.vars.outputs.run-url }})
+          >
+
+    - name: Create Devin session
+      id: devin-session
+      shell: bash
+      env:
+        DEVIN_TOKEN: ${{ inputs.devin-token }}
+      run: |
+        set -euo pipefail
+        
+        echo "Creating Devin session..."
+        
+        # Prepare the API request payload
+        cat > devin_request.json << 'EOF'
+        {
+          "prompt": "${{ steps.build-prompt.outputs.prompt }}",
+          "repository_url": "https://github.com/${{ github.repository }}",
+          "branch": "${{ github.ref_name }}",
+          "metadata": {
+            "github_run_id": "${{ github.run_id }}",
+            "github_repository": "${{ github.repository }}",
+            "triggered_by": "github_action"
+          }
+        }
+        EOF
+        
+        echo "::group::📤 Devin API Request"
+        cat devin_request.json | jq
+        echo "::endgroup::"
+        
+        # Make API call to Devin
+        response=$(curl -s -X POST \
+          -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d @devin_request.json \
+          "https://api.devin.ai/v1/sessions" || echo "API_CALL_FAILED")
+        
+        if [[ "$response" == "API_CALL_FAILED" ]]; then
+          echo "Failed to call Devin API"
+          exit 1
+        fi
+        
+        echo "::group::📥 Devin API Response"
+        echo "$response" | jq
+        echo "::endgroup::"
+        
+        # Extract session information
+        session_id=$(echo "$response" | jq -r '.session_id // .id // empty')
+        session_url=$(echo "$response" | jq -r '.session_url // .url // empty')
+        
+        if [[ -z "$session_id" ]]; then
+          echo "Failed to extract session ID from Devin API response"
+          exit 1
+        fi
+        
+        echo "Devin session created successfully!"
+        echo "Session ID: $session_id"
+        echo "Session URL: $session_url"
+        
+        echo "session-id=$session_id" >> $GITHUB_OUTPUT
+        echo "session-url=$session_url" >> $GITHUB_OUTPUT
+
+    - name: Append success comment
+      if: steps.comment-start.outputs.comment-id && success()
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        comment-id: ${{ steps.comment-start.outputs.comment-id }}
+        reactions: hooray
+        body: |
+          > ${{ inputs.success-message || '✅ **Devin AI session created successfully!**' }}
+          >
+          > 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
+          >
+
+    - name: Append failure comment
+      if: failure() && steps.comment-start.outputs.comment-id
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        comment-id: ${{ steps.comment-start.outputs.comment-id }}
+        reactions: confused
+        body: >
+          ${{ inputs.failure-message || '❌ **Failed to create Devin AI session.** Please check the logs for details.' }}

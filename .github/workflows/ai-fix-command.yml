@@ -1,0 +1,34 @@
+name: AI Fix Command
+
+on:
+  workflow_dispatch:
+    inputs:
+      comment-id:
+        description: "Comment ID (Optional)"
+        type: string
+        required: false
+      issue-number:
+        description: "Issue Number (Optional)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Devin AI Fix
+        uses: aaronsteers/devin-action@main
+        with:
+          comment-id: ${{ github.event.inputs.comment-id }}
+          issue-number: ${{ github.event.inputs.issue-number }}
+          prompt-text: "Please analyze this issue/comment and provide a fix or solution. Focus on code changes, bug fixes, or implementation improvements as appropriate."
+          devin-token: ${{ secrets.DEVIN_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          start-message: "🔧 **Running AI fix analysis...**"
+          success-message: "🎯 **AI fix analysis completed!**"
+          failure-message: "⚠️ **AI fix analysis failed.**"

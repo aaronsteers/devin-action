@@ -30,10 +30,8 @@ jobs:
             ai-help
 
           static-args: |
-            repo=${{ fromJSON(steps.pr-info.outputs.json).head.repo.full_name || github.repository }}
-            gitref=${{ fromJSON(steps.pr-info.outputs.json).head.ref }}
             comment-id=${{ github.event.comment.id }}
-            issue-number=${{ github.event.issue.pull_request != null && github.event.issue.number || github.event.issue.number }}
+            issue-number=${{ github.event.issue.number }}
 
       - name: Edit comment with error message
         if: steps.scd.outputs.error-message

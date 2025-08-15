@@ -200,7 +200,7 @@ runs:
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: confused
         body: >
-          > ${{ inputs.failure-message || '❌ **Failed to create Devin AI session.
+          > ❌ **Failed to create Devin AI session.**
           >
           > - ⚙️ [Link to job logs.](${{ steps.vars.outputs.run-url }})
           >

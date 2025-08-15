@@ -80,7 +80,7 @@ When using the slash command dispatch workflow, the following commands are avail
 
 - `/devin [prompt]` - Creates a general Devin session with optional custom prompt
 - `/ai-fix` - Creates a Devin session focused on analyzing and fixing issues
-- `/ai-help` - Creates a Devin session focused on providing help and guidance
+- `/ai-ask` - Creates a Devin session focused on providing help and guidance
 
 ## License
 

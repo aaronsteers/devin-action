@@ -204,4 +204,4 @@ runs:
           >
           > - ⚙️ [Link to job logs.](${{ steps.vars.outputs.run-url }})
           >
-          > ** Please check the logs for details.' }}
+          > **Please check the logs for details.**

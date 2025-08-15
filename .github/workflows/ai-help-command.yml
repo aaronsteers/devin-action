@@ -31,7 +31,7 @@ jobs:
         with:
           comment-id: ${{ github.event.inputs.comment-id }}
           issue-number: ${{ github.event.inputs.issue-number }}
-          prompt-text: "Please provide help and guidance for this issue/comment. Explain the problem, suggest solutions, and provide implementation guidance as appropriate."
+          playbook-macro: "!issue_ask"
           devin-token: ${{ secrets.DEVIN_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           start-message: "💡 **Getting AI assistance...**"

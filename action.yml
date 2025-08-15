@@ -140,7 +140,7 @@ runs:
         echo "Creating Devin session..."
 
         # Decode the base64-encoded prompt to handle special characters safely
-        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d)
+        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
         
         # Prepare the API request payload using jq to properly escape JSON
         jq -n \

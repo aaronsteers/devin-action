@@ -101,8 +101,15 @@ runs:
         echo -e "$final_prompt"
         echo "::endgroup::"
 
-        # Save prompt to output (escape for JSON)
+        # Save prompt to output (properly escaped for safe YAML/JSON processing)
+        # Use base64 encoding to safely handle any special characters including quotes
         echo "prompt<<EOF" >> $GITHUB_OUTPUT
+        echo -n "$final_prompt" | base64 -w 0 >> $GITHUB_OUTPUT
+        echo >> $GITHUB_OUTPUT  # Add newline before EOF
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        # Also save a human-readable version for debugging
+        echo "prompt_readable<<EOF" >> $GITHUB_OUTPUT
         echo -e "$final_prompt" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
@@ -132,9 +139,12 @@ runs:
 
         echo "Creating Devin session..."
 
+        # Decode the base64-encoded prompt to handle special characters safely
+        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d)
+        
         # Prepare the API request payload using jq to properly escape JSON
         jq -n \
-          --arg prompt "${{ steps.build-prompt.outputs.prompt }}" \
+          --arg prompt "$decoded_prompt" \
           --arg repo_url "https://github.com/${{ github.repository }}" \
           --arg branch "${{ github.ref_name }}" \
           --arg run_id "${{ github.run_id }}" \

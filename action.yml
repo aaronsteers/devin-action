@@ -104,7 +104,7 @@ runs:
         # Save prompt to output (properly escaped for safe YAML/JSON processing)
         # Use base64 encoding to safely handle any special characters including quotes
         echo "prompt<<EOF" >> $GITHUB_OUTPUT
-        echo -n "$final_prompt" | base64 -w 0 >> $GITHUB_OUTPUT
+        echo -n "$final_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
         echo >> $GITHUB_OUTPUT  # Add newline before EOF
         echo "EOF" >> $GITHUB_OUTPUT
         

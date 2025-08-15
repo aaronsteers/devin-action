@@ -31,7 +31,7 @@ jobs:
         with:
           comment-id: ${{ github.event.inputs.comment-id }}
           issue-number: ${{ github.event.inputs.issue-number }}
-          prompt-text: "Please analyze this issue/comment and provide a fix or solution. Focus on code changes, bug fixes, or implementation improvements as appropriate."
+          playbook-macro: "!issue_fix"
           devin-token: ${{ secrets.DEVIN_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           start-message: "🔧 **Running AI fix analysis...**"

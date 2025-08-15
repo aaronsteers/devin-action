@@ -1,6 +1,6 @@
 name: Devin AI Action
 description: |
-  Creates a new Devin.ai session with a given prompt or playbook. Designed to be used in slash commands and can post status updates back to PR comments.
+  Creates a new Devin.ai session with a given prompt or playbook. Designed to be used directly, or in slash commands. When invoked via slash commands, can post a response in a comment back to the originating issue or PR.
 branding:
   icon: cpu
   color: purple
@@ -27,7 +27,7 @@ inputs:
   start-message:
     description: "Message to include in the start comment"
     required: false
-    default: ""
+    default: "🤖 **Starting Devin AI session...**"
 
 runs:
   using: "composite"

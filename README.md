@@ -1,6 +1,9 @@
 # Devin Action
 
-A reusable GitHub action which calls out to Devin.ai, creating a new Devin session with a given prompt or playbook. This action is designed for use with slash commands in PR comments and can automatically gather context from GitHub issues and comments.
+A reusable GitHub action which calls out to Devin.ai, creating a new Devin session with a given prompt or playbook. Designed to be used directly, or in slash commands. When invoked via slash commands, Devin can:
+- post a response back as a comment
+- update the current PR
+- open an new PR if needed
 
 ## Features
 
@@ -21,7 +24,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `prompt-text`  | Additional custom prompt text                                               | false    |          |
 | `devin-token`  | Devin API Token (required for authentication)                              | true     |          |
 | `github-token` | GitHub Token (required for posting comments and accessing repo context)    | false    |          |
-| `start-message`| Custom message for the start comment                                       | false    |          |
+| `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
 
 ## Usage
 
@@ -38,7 +41,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 
 ### Slash Command Example
 
-This action is designed to work with slash commands in PR comments. The action will automatically gather context from the comment and/or issue.
+This action is designed to work with slash commands in issue and PR comments. The action will automatically gather context from the comment and/or issue.
 
 ```yaml
 - name: Run Devin from Comment

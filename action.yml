@@ -52,6 +52,9 @@ runs:
           comment_author=$(echo $COMMENT_JSON | jq -r .user.login)
 
           prompt_parts+=("Comment from @${comment_author}: ${comment_body}")
+          
+          # Add PR response instruction when comment-id is provided
+          prompt_parts+=("IMPORTANT: The user will expect a response posted back to the PR. You should post exactly one comment back to the PR, unless otherwise requested. If the user requested a PR, your comment should contain a link to the PR.")
         fi
 
         # Add issue context if issue-number is provided

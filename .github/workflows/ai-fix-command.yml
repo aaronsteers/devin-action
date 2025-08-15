@@ -35,5 +35,3 @@ jobs:
           devin-token: ${{ secrets.DEVIN_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           start-message: "🔧 **Running AI fix analysis...**"
-          success-message: "🎯 **AI fix analysis completed!**"
-          failure-message: "⚠️ **AI fix analysis failed.**"

@@ -22,8 +22,6 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `devin-token`  | Devin API Token (required for authentication)                              | true     |          |
 | `github-token` | GitHub Token (required for posting comments and accessing repo context)    | false    |          |
 | `start-message`| Custom message for the start comment                                       | false    |          |
-| `success-message`| Custom message for the success comment                                   | false    |          |
-| `failure-message`| Custom message for the failure message                                   | false    |          |
 
 ## Usage
 

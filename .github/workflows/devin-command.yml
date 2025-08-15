@@ -9,7 +9,7 @@ on:
         required: false
       issue-number:
         description: Issue Number. Optional.
-        type: number
+        type: string
         required: false
       # Additional inputs for Devin-specific functionality:
       playbook-macro:

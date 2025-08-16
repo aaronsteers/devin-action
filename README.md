@@ -126,7 +126,7 @@ jobs:
           issue-number: ${{ github.event.client_payload.slash_command.args.named.issue || inputs.issue-number }}
           playbook-macro: '!issue_help'
           devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
-          github-token: ${{ secrets.OCTAVIA_PAT }}
+          github-token: ${{ secrets.MY_COMMENTS_PAT }}
           start-message: '🤖 **AI Help session starting...**'
 ```
 

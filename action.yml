@@ -1,4 +1,4 @@
-name: Devin AI Action
+name: Devin Action
 description: |
   Triggers a Devin.ai session with a given prompt or playbook. Optimized for use directly or as a response to slash commands.
 branding:

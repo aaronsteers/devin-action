@@ -79,11 +79,56 @@ All provided inputs are concatenated to create a comprehensive prompt for Devin.
 
 ## Available Slash Commands
 
-When using the slash command dispatch workflow, the following commands are available:
+When using the slash command dispatch workflow here in this repo, the following commands are available:
 
 - `/devin [prompt]` - Creates a general Devin session with optional custom prompt
 - `/ai-fix` - Creates a Devin session focused on analyzing and fixing issues
 - `/ai-ask` - Creates a Devin session focused on providing help and guidance
+
+## Example Executions
+
+For execution examples, check the [pinned issues](https://github.com/aaronsteers/devin-action/issues) here in this repo.
+
+## Example Workflow [Slash Commands]
+
+`.github/workflows/ai-help-command.yml`
+
+```yml
+name: AI Help Command
+
+on:
+  repository_dispatch:
+    types: [ai-help-command]
+  workflow_dispatch:
+    inputs:
+      issue-number:
+        description: 'Issue number for context'
+        required: true
+        type: string
+      comment-id:
+        description: 'Comment ID that triggered the command (optional)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  ai-repro:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run AI Help
+        uses: aaronsteers/devin-action@v1
+        with:
+          comment-id: ${{ github.event.client_payload.slash_command.args.named.comment-id || inputs.comment-id }}
+          issue-number: ${{ github.event.client_payload.slash_command.args.named.issue || inputs.issue-number }}
+          playbook-macro: '!issue_help'
+          devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+          github-token: ${{ secrets.OCTAVIA_PAT }}
+          start-message: '🤖 **AI Help session starting...**'
+```
 
 ## License
 

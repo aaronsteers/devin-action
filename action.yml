@@ -28,6 +28,9 @@ inputs:
     description: "Message to include in the start comment"
     required: false
     default: "🤖 **Starting Devin AI session...**"
+  tags:
+    description: "Comma-separated list of tags to apply to the Devin session (optional)"
+    required: false
 
 runs:
   using: "composite"
@@ -142,6 +145,13 @@ runs:
         # Decode the base64-encoded prompt to handle special characters safely
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
         
+        # Process tags input if provided
+        tags_array="[]"
+        if [[ -n "${{ inputs.tags }}" ]]; then
+          # Convert comma-separated string to JSON array
+          tags_array=$(echo "${{ inputs.tags }}" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+        fi
+        
         # Prepare the API request payload using jq to properly escape JSON
         jq -n \
           --arg prompt "$decoded_prompt" \
@@ -149,10 +159,12 @@ runs:
           --arg branch "${{ github.ref_name }}" \
           --arg run_id "${{ github.run_id }}" \
           --arg repository "${{ github.repository }}" \
+          --argjson tags "$tags_array" \
           '{
             "prompt": $prompt,
             "repository_url": $repo_url,
             "branch": $branch,
+            "tags": $tags,
             "metadata": {
               "github_run_id": $run_id,
               "github_repository": $repository,

@@ -25,6 +25,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `devin-token`  | Devin API Token (required for authentication)                              | true     |          |
 | `github-token` | GitHub Token (required for posting comments and accessing repo context)    | false    |          |
 | `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
+| `tags`         | Comma-separated list of tags to apply to the Devin session                 | false    |          |
 
 ## Usage
 

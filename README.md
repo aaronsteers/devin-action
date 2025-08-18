@@ -27,6 +27,38 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
 | `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided | false    |          |
 
+## Session Tagging
+
+This action automatically adds tags to Devin sessions for better monitoring and searching:
+
+### Automatic Tags
+- **`gh-actions-trigger`** - Always added to identify sessions triggered from GitHub Actions
+- **`playbook-{macro-name}`** - Added when `playbook-macro` is provided (e.g., `playbook-issue-ask` for `!issue_ask`)
+
+### Additional Tags
+You can provide additional tags using the `tags` input parameter, which supports both formats:
+
+**CSV format:**
+```yaml
+tags: 'priority-high,bug-fix,frontend'
+```
+
+**Line-delimited format:**
+```yaml
+tags: |
+  priority-high
+  bug-fix
+  frontend
+```
+
+**Mixed format (CSV per line):**
+```yaml
+tags: |
+  priority-high,urgent
+  bug-fix,frontend
+  team-alpha
+```
+
 ## Usage
 
 ### Basic Example
@@ -38,6 +70,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
     prompt-text: "Please review this code and suggest improvements"
     devin-token: ${{ secrets.DEVIN_TOKEN }}
     github-token: ${{ secrets.GITHUB_TOKEN }}
+    tags: 'code-review,improvement'
 ```
 
 ### Slash Command Example
@@ -65,7 +98,12 @@ This action is designed to work with slash commands in issue and PR comments. Th
     prompt-text: "Additional context about the specific failure"
     devin-token: ${{ secrets.DEVIN_TOKEN }}
     github-token: ${{ secrets.GITHUB_TOKEN }}
+    tags: |
+      ci-failure
+      urgent
 ```
+
+**Tags applied:** `gh-actions-trigger`, `playbook-fix-ci-failures`, `ci-failure`, `urgent`
 
 ## Context Gathering
 

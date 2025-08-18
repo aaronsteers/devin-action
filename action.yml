@@ -29,7 +29,7 @@ inputs:
     required: false
     default: "🤖 **Starting Devin AI session...**"
   tags:
-    description: "Comma-separated list of tags to apply to the Devin session (optional)"
+    description: "Comma-separated list of additional tags to apply to the Devin session (automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided)"
     required: false
 
 runs:
@@ -145,12 +145,36 @@ runs:
         # Decode the base64-encoded prompt to handle special characters safely
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
         
-        # Process tags input if provided
-        tags_array="[]"
-        if [[ -n "${{ inputs.tags }}" ]]; then
-          # Convert comma-separated string to JSON array
-          tags_array=$(echo "${{ inputs.tags }}" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+        # Build automatic tags
+        automatic_tags=("gh-actions-trigger")
+        
+        # Add playbook tag if playbook-macro is provided
+        if [[ -n "${{ inputs.playbook-macro }}" ]]; then
+          # Extract macro name (remove leading ! if present)
+          macro_name="${{ inputs.playbook-macro }}"
+          macro_name="${macro_name#!}"  # Remove leading ! if present
+          automatic_tags+=("playbook-${macro_name}")
         fi
+        
+        # Process additional tags input if provided
+        additional_tags=()
+        if [[ -n "${{ inputs.tags }}" ]]; then
+          # Convert comma-separated string to array
+          IFS=',' read -ra tag_array <<< "${{ inputs.tags }}"
+          for tag in "${tag_array[@]}"; do
+            # Trim whitespace and add non-empty tags
+            trimmed_tag=$(echo "$tag" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            if [[ -n "$trimmed_tag" ]]; then
+              additional_tags+=("$trimmed_tag")
+            fi
+          done
+        fi
+        
+        # Combine automatic and additional tags
+        all_tags=("${automatic_tags[@]}" "${additional_tags[@]}")
+        
+        # Convert to JSON array
+        tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
         
         # Prepare the API request payload using jq to properly escape JSON
         jq -n \

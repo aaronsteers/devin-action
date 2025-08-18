@@ -31,6 +31,10 @@ inputs:
   tags:
     description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided"
     required: false
+  dry-run:
+    description: "If 'true', the action will simulate the process without making an actual API call to Devin"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -55,7 +59,7 @@ runs:
           comment_author=$(echo $COMMENT_JSON | jq -r .user.login)
 
           prompt_parts+=("Comment from @${comment_author}: ${comment_body}")
-          
+
           # Add PR response instruction when comment-id is provided
           pr_response_instruction="IMPORTANT: The user will expect a response posted back to the PR. You should post exactly one comment back to the respective issue PR. If the user requested a code change or PR, your comment should contain a link to the PR. Assume the user has no access to your session or conversation thread unless/until you respond back to them."
           prompt_parts+=("$pr_response_instruction")
@@ -80,10 +84,13 @@ runs:
 
         # Add custom prompt text if provided
         if [[ -n "${{ inputs.prompt-text }}" ]]; then
+          echo "👀 Found 'prompt-text' input"
           prompt_parts+=("${{ inputs.prompt-text }}")
+        else
+          echo "👀 No 'prompt-text' input found"
         fi
 
-        # Combine all prompt parts
+        echo "👀 Combining all ${#prompt_parts[@]} prompt parts"
         if [[ ${#prompt_parts[@]} -eq 0 ]]; then
           echo "Error: No prompt content provided. At least one of comment-id, issue-number, playbook-macro, or prompt-text must be specified."
           exit 1
@@ -110,7 +117,7 @@ runs:
         echo -n "$final_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
         echo >> $GITHUB_OUTPUT  # Add newline before EOF
         echo "EOF" >> $GITHUB_OUTPUT
-        
+
         # Also save a human-readable version for debugging
         echo "prompt_readable<<EOF" >> $GITHUB_OUTPUT
         echo -e "$final_prompt" >> $GITHUB_OUTPUT
@@ -144,10 +151,10 @@ runs:
 
         # Decode the base64-encoded prompt to handle special characters safely
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
-        
+
         # Build automatic tags
         automatic_tags=("gh-actions-trigger")
-        
+
         # Add playbook tag if playbook-macro is provided
         if [[ -n "${{ inputs.playbook-macro }}" ]]; then
           # Extract macro name (remove leading ! if present)
@@ -155,7 +162,7 @@ runs:
           macro_name="${macro_name#!}"  # Remove leading ! if present
           automatic_tags+=("playbook-${macro_name}")
         fi
-        
+
         # Process additional tags input if provided (supports both CSV and line-delimited)
         additional_tags=()
         if [[ -n "${{ inputs.tags }}" ]]; then
@@ -175,13 +182,13 @@ runs:
             fi
           done <<< "${{ inputs.tags }}"
         fi
-        
+
         # Combine automatic and additional tags
         all_tags=("${automatic_tags[@]}" "${additional_tags[@]}")
-        
+
         # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
-        
+
         # Prepare the API request payload using jq to properly escape JSON
         jq -n \
           --arg prompt "$decoded_prompt" \
@@ -205,6 +212,13 @@ runs:
         echo "::group::📤 Devin API Request"
         cat devin_request.json | jq
         echo "::endgroup::"
+
+        if [[ "${{ inputs.dry-run }}" == 'true' ]]; then
+          echo "👀 Dry run enabled, exiting early before making API call"
+          echo "👀 Request payload:"
+          cat devin_request.json | jq
+          exit 0
+        fi
 
         # Make API call to Devin
         response=$(curl -s -X POST \

@@ -29,7 +29,7 @@ inputs:
     required: false
     default: "🤖 **Starting Devin AI session...**"
   tags:
-    description: "Comma-separated list of additional tags to apply to the Devin session (automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided)"
+    description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided"
     required: false
 
 runs:
@@ -156,18 +156,24 @@ runs:
           automatic_tags+=("playbook-${macro_name}")
         fi
         
-        # Process additional tags input if provided
+        # Process additional tags input if provided (supports both CSV and line-delimited)
         additional_tags=()
         if [[ -n "${{ inputs.tags }}" ]]; then
-          # Convert comma-separated string to array
-          IFS=',' read -ra tag_array <<< "${{ inputs.tags }}"
-          for tag in "${tag_array[@]}"; do
-            # Trim whitespace and add non-empty tags
-            trimmed_tag=$(echo "$tag" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            if [[ -n "$trimmed_tag" ]]; then
-              additional_tags+=("$trimmed_tag")
+          # Handle both CSV and line-delimited formats
+          # First split by newlines, then by commas for each line
+          while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+              # Split line by commas
+              IFS=',' read -ra tag_array <<< "$line"
+              for tag in "${tag_array[@]}"; do
+                # Trim whitespace and add non-empty tags
+                trimmed_tag=$(echo "$tag" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                if [[ -n "$trimmed_tag" ]]; then
+                  additional_tags+=("$trimmed_tag")
+                fi
+              done
             fi
-          done
+          done <<< "${{ inputs.tags }}"
         fi
         
         # Combine automatic and additional tags

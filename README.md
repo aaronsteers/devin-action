@@ -1,6 +1,7 @@
 # Devin Action
 
 A reusable GitHub action which calls out to Devin.ai, creating a new Devin session with a given prompt or playbook. Designed to be used directly, or in slash commands. When invoked via slash commands, Devin can:
+
 - post a response back as a comment
 - update the current PR
 - open an new PR if needed
@@ -32,18 +33,22 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 This action automatically adds tags to Devin sessions for better monitoring and searching:
 
 ### Automatic Tags
+
 - **`gh-actions-trigger`** - Always added to identify sessions triggered from GitHub Actions
 - **`playbook-{macro-name}`** - Added when `playbook-macro` is provided (e.g., `playbook-issue-ask` for `!issue_ask`)
 
 ### Additional Tags
+
 You can provide additional tags using the `tags` input parameter, which supports both formats:
 
 **CSV format:**
+
 ```yaml
 tags: 'priority-high,bug-fix,frontend'
 ```
 
 **Line-delimited format:**
+
 ```yaml
 tags: |
   priority-high
@@ -52,6 +57,7 @@ tags: |
 ```
 
 **Mixed format (CSV per line):**
+
 ```yaml
 tags: |
   priority-high,urgent

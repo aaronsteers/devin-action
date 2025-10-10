@@ -145,7 +145,7 @@ runs:
       uses: peter-evans/find-comment@v3
       with:
         issue-number: ${{ inputs.issue-number }}
-        body-includes: '🔗 **Session URL:**'
+        body-includes: 'https://app.devin.ai/sessions/'
         direction: last
 
     - name: Create Devin session

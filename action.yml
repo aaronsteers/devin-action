@@ -164,7 +164,7 @@ runs:
         if [[ -n "$previous_comment" ]]; then
           echo "Found previous comment, attempting to extract session ID..."
           # Extract session ID from URL pattern: https://app.devin.ai/sessions/{session_id}
-          if [[ "$previous_comment" =~ https://app\.devin\.ai/sessions/([a-f0-9-]+) ]]; then
+          if [[ "$previous_comment" =~ https://app\.devin\.ai/sessions/([a-fA-F0-9-]+) ]]; then
             session_id="${BASH_REMATCH[1]}"
             session_url="https://app.devin.ai/sessions/${session_id}"
             echo "Found existing session ID: $session_id"
@@ -218,6 +218,7 @@ runs:
             echo "Message sent successfully to existing session!"
             echo "Session ID: $session_id"
             echo "Session URL: $session_url"
+            echo "session-reused=true" >> $GITHUB_OUTPUT
           else
             echo "Unexpected response from message API (status: $http_status)"
             echo "$response" | grep -v "HTTP_STATUS:"
@@ -324,6 +325,7 @@ runs:
           echo "Devin session created successfully!"
           echo "Session ID: $session_id"
           echo "Session URL: $session_url"
+          echo "session-reused=false" >> $GITHUB_OUTPUT
         fi
 
         echo "session-id=$session_id" >> $GITHUB_OUTPUT
@@ -338,7 +340,7 @@ runs:
         body: |
           > - 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
           >
-          > ✅ **Devin AI session ${{ steps.find-session.outputs.comment-id && 'updated' || 'created' }} successfully!**
+          > ✅ **Devin AI session ${{ steps.devin-session.outputs.session-reused == 'true' && 'updated' || 'created' }} successfully!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id

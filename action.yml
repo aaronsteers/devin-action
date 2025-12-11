@@ -133,6 +133,7 @@ runs:
       uses: peter-evans/create-or-update-comment@v4
       id: comment-start
       with:
+        token: ${{ inputs.github-token }}
         comment-id: ${{ inputs.comment-id }}
         issue-number: ${{ inputs.issue-number }}
         body: |
@@ -256,6 +257,7 @@ runs:
       if: steps.comment-start.outputs.comment-id && success()
       uses: peter-evans/create-or-update-comment@v4
       with:
+        token: ${{ inputs.github-token }}
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: hooray
         body: |
@@ -267,6 +269,7 @@ runs:
       if: failure() && steps.comment-start.outputs.comment-id
       uses: peter-evans/create-or-update-comment@v4
       with:
+        token: ${{ inputs.github-token }}
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: confused
         body: |

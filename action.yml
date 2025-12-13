@@ -42,12 +42,15 @@ inputs:
   org-id:
     description: "Organization ID (required for v3 API). Can be found in Devin organization settings"
     required: false
-  auto-approve:
-    description: "If 'true', auto-approve the session without manual approval (v3 API only)"
+  bypass-approval:
+    description: "If 'true', bypass approval for batch session creation (v3 API batch mode only). Requires UseDevinExpert permission"
     required: false
     default: "false"
-  advanced:
-    description: "Advanced execution mode (v3 API only). Set to 'bulk' for bulk session orchestration"
+  advanced-mode:
+    description: "Advanced execution mode (v3 API only). Available modes: 'batch' (start multiple sessions), 'analyze' (analyze sessions), 'create' (create playbook), 'improve' (improve playbook), 'manage' (manage knowledge)"
+    required: false
+  child-playbook-id:
+    description: "Playbook ID for child sessions (required for 'batch' and 'improve' advanced modes)"
     required: false
 
 runs:
@@ -207,8 +210,9 @@ runs:
         # Determine API version and endpoint
         api_version="${{ inputs.api-version }}"
         org_id="${{ inputs.org-id }}"
-        auto_approve="${{ inputs.auto-approve }}"
-        advanced="${{ inputs.advanced }}"
+        bypass_approval="${{ inputs.bypass-approval }}"
+        advanced_mode="${{ inputs.advanced-mode }}"
+        child_playbook_id="${{ inputs.child-playbook-id }}"
 
         if [[ "$api_version" == "v3" ]]; then
           # Validate org-id is provided for v3 API
@@ -219,17 +223,25 @@ runs:
           api_endpoint="https://api.devin.ai/v3beta1/organizations/${org_id}/sessions"
           echo "Using v3 API endpoint: $api_endpoint"
 
+          # Validate child_playbook_id is provided for batch/improve modes
+          if [[ "$advanced_mode" == "batch" || "$advanced_mode" == "improve" ]] && [[ -z "$child_playbook_id" ]]; then
+            echo "Error: child-playbook-id is required when using advanced-mode '$advanced_mode'"
+            exit 1
+          fi
+
           # Build v3 API request payload with additional parameters
           jq -n \
             --arg prompt "$decoded_prompt" \
             --argjson tags "$tags_array" \
-            --argjson auto_approve "$(if [[ "$auto_approve" == "true" ]]; then echo true; else echo false; fi)" \
-            --arg advanced "$advanced" \
+            --argjson bypass_approval "$(if [[ "$bypass_approval" == "true" ]]; then echo true; else echo false; fi)" \
+            --arg advanced_mode "$advanced_mode" \
+            --arg child_playbook_id "$child_playbook_id" \
             '{
               "prompt": $prompt,
               "tags": $tags
-            } + (if $auto_approve then {"auto_approve": true} else {} end)
-              + (if $advanced != "" then {"advanced": $advanced} else {} end)' > devin_request.json
+            } + (if $advanced_mode != "" then {"advanced_mode": $advanced_mode} else {} end)
+              + (if $advanced_mode == "batch" and $bypass_approval then {"bypass_approval": true} else {} end)
+              + (if $child_playbook_id != "" then {"child_playbook_id": $child_playbook_id} else {} end)' > devin_request.json
         else
           # v1 API (default)
           api_endpoint="https://api.devin.ai/v1/sessions"

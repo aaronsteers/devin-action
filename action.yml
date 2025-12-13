@@ -19,7 +19,7 @@ inputs:
     description: "Additional prompt text (optional)"
     required: false
   devin-token:
-    description: "Devin API Token (required for authentication)"
+    description: "Devin API Token (required for authentication). For v1 API: Personal API Key (apk_user_*) or Service API Key (apk_*). For v3 API: Service User credential (cog_*)"
     required: true
   github-token:
     description: "GitHub Token (required for posting comments and accessing repo context)"
@@ -35,6 +35,20 @@ inputs:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
     default: "false"
+  api-version:
+    description: "API version to use: 'v1' (default) or 'v3'. v3 requires org-id and uses service user credentials"
+    required: false
+    default: "v1"
+  org-id:
+    description: "Organization ID (required for v3 API). Can be found in Devin organization settings"
+    required: false
+  auto-approve:
+    description: "If 'true', auto-approve the session without manual approval (v3 API only)"
+    required: false
+    default: "false"
+  advanced:
+    description: "Advanced execution mode (v3 API only). Set to 'bulk' for bulk session orchestration"
+    required: false
 
 runs:
   using: "composite"
@@ -190,25 +204,57 @@ runs:
         # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
 
-        # Prepare the API request payload using jq to properly escape JSON
-        jq -n \
-          --arg prompt "$decoded_prompt" \
-          --arg repo_url "https://github.com/${{ github.repository }}" \
-          --arg branch "${{ github.ref_name }}" \
-          --arg run_id "${{ github.run_id }}" \
-          --arg repository "${{ github.repository }}" \
-          --argjson tags "$tags_array" \
-          '{
-            "prompt": $prompt,
-            "repository_url": $repo_url,
-            "branch": $branch,
-            "tags": $tags,
-            "metadata": {
-              "github_run_id": $run_id,
-              "github_repository": $repository,
-              "triggered_by": "github_action"
-            }
-          }' > devin_request.json
+        # Determine API version and endpoint
+        api_version="${{ inputs.api-version }}"
+        org_id="${{ inputs.org-id }}"
+        auto_approve="${{ inputs.auto-approve }}"
+        advanced="${{ inputs.advanced }}"
+
+        if [[ "$api_version" == "v3" ]]; then
+          # Validate org-id is provided for v3 API
+          if [[ -z "$org_id" ]]; then
+            echo "Error: org-id is required when using v3 API"
+            exit 1
+          fi
+          api_endpoint="https://api.devin.ai/v3beta1/organizations/${org_id}/sessions"
+          echo "Using v3 API endpoint: $api_endpoint"
+
+          # Build v3 API request payload with additional parameters
+          jq -n \
+            --arg prompt "$decoded_prompt" \
+            --argjson tags "$tags_array" \
+            --argjson auto_approve "$(if [[ "$auto_approve" == "true" ]]; then echo true; else echo false; fi)" \
+            --arg advanced "$advanced" \
+            '{
+              "prompt": $prompt,
+              "tags": $tags
+            } + (if $auto_approve then {"auto_approve": true} else {} end)
+              + (if $advanced != "" then {"advanced": $advanced} else {} end)' > devin_request.json
+        else
+          # v1 API (default)
+          api_endpoint="https://api.devin.ai/v1/sessions"
+          echo "Using v1 API endpoint: $api_endpoint"
+
+          # Prepare the v1 API request payload using jq to properly escape JSON
+          jq -n \
+            --arg prompt "$decoded_prompt" \
+            --arg repo_url "https://github.com/${{ github.repository }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg repository "${{ github.repository }}" \
+            --argjson tags "$tags_array" \
+            '{
+              "prompt": $prompt,
+              "repository_url": $repo_url,
+              "branch": $branch,
+              "tags": $tags,
+              "metadata": {
+                "github_run_id": $run_id,
+                "github_repository": $repository,
+                "triggered_by": "github_action"
+              }
+            }' > devin_request.json
+        fi
 
         echo "::group::📤 Devin API Request"
         cat devin_request.json | jq
@@ -226,7 +272,7 @@ runs:
           -H "Authorization: Bearer ${DEVIN_TOKEN}" \
           -H "Content-Type: application/json" \
           -d @devin_request.json \
-          "https://api.devin.ai/v1/sessions" || echo "API_CALL_FAILED")
+          "$api_endpoint" || echo "API_CALL_FAILED")
 
         if [[ "$response" == "API_CALL_FAILED" ]]; then
           echo "Failed to call Devin API"

@@ -55,8 +55,8 @@ runs:
         if [[ -n "${{ inputs.comment-id }}" ]]; then
           echo "Fetching comment context..."
           COMMENT_JSON=$(gh api repos/${{ github.repository }}/issues/comments/${{ inputs.comment-id }})
-          comment_body=$(echo $COMMENT_JSON | jq -r .body)
-          comment_author=$(echo $COMMENT_JSON | jq -r .user.login)
+          comment_body=$(jq -r .body <<< "$COMMENT_JSON")
+          comment_author=$(jq -r .user.login <<< "$COMMENT_JSON")
 
           prompt_parts+=("Comment from @${comment_author}: ${comment_body}")
 
@@ -69,8 +69,8 @@ runs:
         if [[ -n "${{ inputs.issue-number }}" ]]; then
           echo "Fetching issue context..."
           ISSUE_JSON=$(gh api repos/${{ github.repository }}/issues/${{ inputs.issue-number }})
-          issue_title=$(echo $ISSUE_JSON | jq -r .title)
-          issue_author=$(echo $ISSUE_JSON | jq -r .user.login)
+          issue_title=$(jq -r .title <<< "$ISSUE_JSON")
+          issue_author=$(jq -r .user.login <<< "$ISSUE_JSON")
           issue_url="https://github.com/${{ github.repository }}/issues/${{ inputs.issue-number }}"
 
           prompt_parts+=("Issue #${{ inputs.issue-number }} by @${issue_author}: ${issue_title}")
@@ -96,11 +96,11 @@ runs:
           exit 1
         fi
 
-        # Join prompt parts with newlines
+        # Join prompt parts with actual newlines (using $'\n' for real newlines)
         final_prompt=""
         for part in "${prompt_parts[@]}"; do
           if [[ -n "$final_prompt" ]]; then
-            final_prompt="${final_prompt}\n\n${part}"
+            final_prompt="${final_prompt}"$'\n\n'"${part}"
           else
             final_prompt="$part"
           fi
@@ -108,19 +108,19 @@ runs:
 
         echo "Final prompt built successfully"
         echo "::group::📝 Devin Prompt Preview"
-        echo -e "$final_prompt"
+        printf '%s\n' "$final_prompt"
         echo "::endgroup::"
 
         # Save prompt to output (properly escaped for safe YAML/JSON processing)
         # Use base64 encoding to safely handle any special characters including quotes
         echo "prompt<<EOF" >> $GITHUB_OUTPUT
-        echo -n "$final_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
+        printf '%s' "$final_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
         echo >> $GITHUB_OUTPUT  # Add newline before EOF
         echo "EOF" >> $GITHUB_OUTPUT
 
         # Also save a human-readable version for debugging
         echo "prompt_readable<<EOF" >> $GITHUB_OUTPUT
-        echo -e "$final_prompt" >> $GITHUB_OUTPUT
+        printf '%s\n' "$final_prompt" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Generate run link

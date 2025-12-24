@@ -14,6 +14,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 - ✅ Supports playbook macro integration
 - ✅ Posts status updates and session links as comments
 - ✅ Flexible input handling - use any combination of inputs
+- ✅ Automatically reuses existing Devin sessions when triggered via slash commands
 
 ## Inputs
 
@@ -121,6 +122,16 @@ The action intelligently builds prompts by combining available context:
 4. **Custom Prompt**: If `prompt-text` is provided, includes additional custom instructions
 
 All provided inputs are concatenated to create a comprehensive prompt for Devin.
+
+## Session Reuse
+
+When triggered via slash commands, the action intelligently reuses existing Devin sessions:
+
+1. **First Command**: Creates a new Devin session and posts the session URL in a comment
+2. **Subsequent Commands**: Searches for the previous session URL in comments and sends a message to that existing session instead of creating a new one
+3. **Benefits**: Maintains conversation context across multiple slash commands in the same issue/PR
+
+This allows for iterative collaboration with Devin without losing context between commands.
 
 ## Available Slash Commands
 

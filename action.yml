@@ -140,15 +140,45 @@ runs:
           > ${{ inputs.start-message || '🤖 **Starting Devin AI session...**' }}
           >
 
-    - name: Create Devin session
-      id: devin-session
+    - name: Find previous Devin session comment
+      if: inputs.comment-id || inputs.issue-number
+      id: find-session
+      uses: peter-evans/find-comment@v3
+      with:
+        issue-number: ${{ inputs.issue-number }}
+        body-includes: 'https://app.devin.ai/sessions/'
+        direction: last
+
+    - name: Extract session ID from previous comment
+      if: steps.find-session.outputs.comment-body != ''
+      id: extract-session
+      shell: bash
+      run: |
+        set -euo pipefail
+        
+        previous_comment="${{ steps.find-session.outputs.comment-body }}"
+        
+        echo "Found previous comment, attempting to extract session ID..."
+        if [[ "$previous_comment" =~ https://app\.devin\.ai/sessions/([a-fA-F0-9-]+) ]]; then
+          session_id="${BASH_REMATCH[1]}"
+          session_url="https://app.devin.ai/sessions/${session_id}"
+          echo "Found existing session ID: $session_id"
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        else
+          echo "Could not extract session ID from previous comment"
+        fi
+
+    - name: Create new Devin session
+      if: steps.extract-session.outputs.session-id == ''
+      id: create-session
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
       run: |
         set -euo pipefail
-
-        echo "Creating Devin session..."
+        
+        echo "Creating new Devin session..."
 
         # Decode the base64-encoded prompt to handle special characters safely
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
@@ -158,23 +188,18 @@ runs:
 
         # Add playbook tag if playbook-macro is provided
         if [[ -n "${{ inputs.playbook-macro }}" ]]; then
-          # Extract macro name (remove leading ! if present)
           macro_name="${{ inputs.playbook-macro }}"
-          macro_name="${macro_name#!}"  # Remove leading ! if present
+          macro_name="${macro_name#!}"
           automatic_tags+=("playbook-${macro_name}")
         fi
 
         # Process additional tags input if provided (supports both CSV and line-delimited)
         additional_tags=()
         if [[ -n "${{ inputs.tags }}" ]]; then
-          # Handle both CSV and line-delimited formats
-          # First split by newlines, then by commas for each line
           while IFS= read -r line; do
             if [[ -n "$line" ]]; then
-              # Split line by commas
               IFS=',' read -ra tag_array <<< "$line"
               for tag in "${tag_array[@]}"; do
-                # Trim whitespace and add non-empty tags
                 trimmed_tag=$(echo "$tag" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 if [[ -n "$trimmed_tag" ]]; then
                   additional_tags+=("$trimmed_tag")
@@ -186,11 +211,9 @@ runs:
 
         # Combine automatic and additional tags
         all_tags=("${automatic_tags[@]}" "${additional_tags[@]}")
-
-        # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
 
-        # Prepare the API request payload using jq to properly escape JSON
+        # Prepare the API request payload
         jq -n \
           --arg prompt "$decoded_prompt" \
           --arg repo_url "https://github.com/${{ github.repository }}" \
@@ -216,8 +239,6 @@ runs:
 
         if [[ "${{ inputs.dry-run }}" == 'true' ]]; then
           echo "👀 Dry run enabled, exiting early before making API call"
-          echo "👀 Request payload:"
-          cat devin_request.json | jq
           exit 0
         fi
 
@@ -249,9 +270,91 @@ runs:
         echo "Devin session created successfully!"
         echo "Session ID: $session_id"
         echo "Session URL: $session_url"
-
+        
         echo "session-id=$session_id" >> $GITHUB_OUTPUT
         echo "session-url=$session_url" >> $GITHUB_OUTPUT
+
+    - name: Send message to existing session
+      if: steps.extract-session.outputs.session-id != ''
+      id: send-message
+      shell: bash
+      env:
+        DEVIN_TOKEN: ${{ inputs.devin-token }}
+      run: |
+        set -euo pipefail
+        
+        session_id="${{ steps.extract-session.outputs.session-id }}"
+        session_url="${{ steps.extract-session.outputs.session-url }}"
+        
+        echo "Sending message to existing Devin session $session_id..."
+
+        # Decode the base64-encoded prompt to handle special characters safely
+        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
+        
+        # Prepare the message API request payload
+        jq -n \
+          --arg message "$decoded_prompt" \
+          '{
+            "message": $message
+          }' > devin_request.json
+
+        echo "::group::📤 Devin Message API Request"
+        cat devin_request.json | jq
+        echo "::endgroup::"
+
+        if [[ "${{ inputs.dry-run }}" == 'true' ]]; then
+          echo "👀 Dry run enabled, exiting early before making API call"
+          exit 0
+        fi
+
+        # Make API call to send message to existing session
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+          -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d @devin_request.json \
+          "https://api.devin.ai/v1/sessions/${session_id}/message" || echo "API_CALL_FAILED")
+
+        if [[ "$response" == "API_CALL_FAILED" ]]; then
+          echo "Failed to call Devin message API"
+          exit 1
+        fi
+
+        # Extract HTTP status code
+        http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d: -f2)
+        
+        if [[ "$http_status" == "204" ]]; then
+          echo "Message sent successfully to existing session!"
+          echo "Session ID: $session_id"
+          echo "Session URL: $session_url"
+          
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        else
+          echo "Unexpected response from message API (status: $http_status)"
+          echo "$response" | grep -v "HTTP_STATUS:"
+          exit 1
+        fi
+
+    - name: Set session outputs
+      id: devin-session
+      shell: bash
+      run: |
+        set -euo pipefail
+        
+        # Get session info from whichever step ran
+        if [[ -n "${{ steps.send-message.outputs.session-id }}" ]]; then
+          session_id="${{ steps.send-message.outputs.session-id }}"
+          session_url="${{ steps.send-message.outputs.session-url }}"
+          session_reused="true"
+        else
+          session_id="${{ steps.create-session.outputs.session-id }}"
+          session_url="${{ steps.create-session.outputs.session-url }}"
+          session_reused="false"
+        fi
+        
+        echo "session-id=$session_id" >> $GITHUB_OUTPUT
+        echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        echo "session-reused=$session_reused" >> $GITHUB_OUTPUT
 
     - name: Append success comment
       if: steps.comment-start.outputs.comment-id && success()
@@ -263,7 +366,7 @@ runs:
         body: |
           > - 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
           >
-          > ✅ **Devin AI session created successfully!**
+          > ✅ **Devin AI session ${{ steps.devin-session.outputs.session-reused == 'true' && 'updated' || 'created' }} successfully!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id

@@ -36,6 +36,23 @@ inputs:
     required: false
     default: "false"
 
+outputs:
+  session-id:
+    description: "The Devin session ID"
+    value: ${{ steps.devin-session.outputs.session-id }}
+  session-url:
+    description: "The URL to view the Devin session"
+    value: ${{ steps.devin-session.outputs.session-url }}
+  prompt:
+    description: "The base64-encoded prompt sent to Devin"
+    value: ${{ steps.build-prompt.outputs.prompt }}
+  prompt_readable:
+    description: "The human-readable prompt sent to Devin"
+    value: ${{ steps.build-prompt.outputs.prompt_readable }}
+  run-url:
+    description: "The GitHub Actions run URL"
+    value: ${{ steps.vars.outputs.run-url }}
+
 runs:
   using: "composite"
   steps:

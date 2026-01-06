@@ -10,7 +10,7 @@ inputs:
     description: "Comment ID (optional, for reply chaining and context)"
     required: false
   issue-number:
-    description: "Issue number (optional, for context)"
+    description: "Issue or PR number (optional, for context). This can be either an issue number or a pull request number."
     required: false
   playbook-macro:
     description: "Playbook macro (optional, for structured workflows) - should start with '!' (e.g., !my_playbook)"
@@ -74,7 +74,9 @@ runs:
           COMMENT_JSON=$(gh api repos/${{ github.repository }}/issues/comments/${{ inputs.comment-id }})
           comment_body=$(jq -r .body <<< "$COMMENT_JSON")
           comment_author=$(jq -r .user.login <<< "$COMMENT_JSON")
+          comment_url=$(jq -r .html_url <<< "$COMMENT_JSON")
 
+          prompt_parts+=("Comment URL: ${comment_url}")
           prompt_parts+=("Comment from @${comment_author}: ${comment_body}")
 
           # Add PR response instruction when comment-id is provided
@@ -207,24 +209,33 @@ runs:
         # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
 
+        # Build metadata object with optional fields
+        metadata_json=$(jq -n \
+          --arg run_id "${{ github.run_id }}" \
+          --arg repository "${{ github.repository }}" \
+          --arg comment_id "${{ inputs.comment-id }}" \
+          --arg issue_number "${{ inputs.issue-number }}" \
+          '{
+            "github_run_id": $run_id,
+            "github_repository": $repository,
+            "triggered_by": "github_action"
+          }
+          | if $comment_id != "" then . + {"github_comment_id": $comment_id, "github_comment_url": "https://github.com/\($repository)/issues/comments/\($comment_id)"} else . end
+          | if $issue_number != "" then . + {"github_issue_number": $issue_number, "github_issue_url": "https://github.com/\($repository)/issues/\($issue_number)"} else . end')
+
         # Prepare the API request payload using jq to properly escape JSON
         jq -n \
           --arg prompt "$decoded_prompt" \
           --arg repo_url "https://github.com/${{ github.repository }}" \
           --arg branch "${{ github.ref_name }}" \
-          --arg run_id "${{ github.run_id }}" \
-          --arg repository "${{ github.repository }}" \
           --argjson tags "$tags_array" \
+          --argjson metadata "$metadata_json" \
           '{
             "prompt": $prompt,
             "repository_url": $repo_url,
             "branch": $branch,
             "tags": $tags,
-            "metadata": {
-              "github_run_id": $run_id,
-              "github_repository": $repository,
-              "triggered_by": "github_action"
-            }
+            "metadata": $metadata
           }' > devin_request.json
 
         echo "::group::📤 Devin API Request"

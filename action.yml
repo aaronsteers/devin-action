@@ -186,26 +186,52 @@ runs:
         # Decode the base64-encoded prompt to handle special characters safely
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
 
+        # ===== DEBUG: Print input summary =====
+        echo "::group::🔍 Input Summary"
+        echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (inject message)' || echo 'CREATE NEW SESSION')"
+        echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "tags: $([[ -n "${{ inputs.tags }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "dry-run: ${{ inputs.dry-run }}"
+        echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
+        echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
+        echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
+        echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET (length: ${#decoded_prompt} chars)' || echo 'NOT SET')"
+        echo "Prompt length: ${#decoded_prompt} characters"
+        echo "::endgroup::"
+
         # Check if we're injecting into an existing session or creating a new one
         if [[ -n "${{ inputs.reuse-session }}" ]]; then
           # ===== INJECT MESSAGE INTO EXISTING SESSION =====
           reuse_input="${{ inputs.reuse-session }}"
           
+          echo "::group::🔄 Session Reuse Configuration"
+          echo "Raw reuse-session input: $reuse_input"
+          
           # Parse session ID from URL if a URL is provided
           if [[ "$reuse_input" == *"app.devin.ai/sessions/"* ]]; then
             # Extract session ID from URL (e.g., https://app.devin.ai/sessions/abc123)
             session_id=$(echo "$reuse_input" | sed 's|.*app.devin.ai/sessions/||' | sed 's|[?#].*||')
-            echo "Parsed session ID from URL: $session_id"
+            echo "Input type: URL"
+            echo "Parsed session ID: $session_id"
           else
             # Assume it's already a session ID
             session_id="$reuse_input"
+            echo "Input type: Session ID (direct)"
+          fi
+          
+          # Validate that session_id is not empty after parsing
+          if [[ -z "$session_id" ]]; then
+            echo "::error::Failed to extract session ID from reuse-session input: '$reuse_input'"
+            exit 1
           fi
           
           session_url="https://app.devin.ai/sessions/${session_id}"
+          echo "Final session ID: $session_id"
+          echo "Final session URL: $session_url"
+          echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          echo "::endgroup::"
 
           echo "Injecting message into existing Devin session..."
-          echo "Session ID: $session_id"
-          echo "Session URL: $session_url"
 
           # Prepare the message API request payload
           jq -n \
@@ -245,6 +271,10 @@ runs:
 
           if [[ "$http_status" -ge 200 && "$http_status" -lt 300 ]]; then
             echo "Message injected successfully into Devin session!"
+            echo "::group::📤 Action Outputs"
+            echo "session-id=$session_id"
+            echo "session-url=$session_url"
+            echo "::endgroup::"
             echo "session-id=$session_id" >> $GITHUB_OUTPUT
             echo "session-url=$session_url" >> $GITHUB_OUTPUT
           else
@@ -255,6 +285,12 @@ runs:
 
         else
           # ===== CREATE NEW SESSION =====
+          echo "::group::🆕 New Session Configuration"
+          echo "API endpoint: POST /v1/sessions"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "::endgroup::"
+
           echo "Creating new Devin session..."
 
           # Build automatic tags
@@ -360,8 +396,10 @@ runs:
           fi
 
           echo "Devin session created successfully!"
-          echo "Session ID: $session_id"
-          echo "Session URL: $session_url"
+          echo "::group::📤 Action Outputs"
+          echo "session-id=$session_id"
+          echo "session-url=$session_url"
+          echo "::endgroup::"
 
           echo "session-id=$session_id" >> $GITHUB_OUTPUT
           echo "session-url=$session_url" >> $GITHUB_OUTPUT

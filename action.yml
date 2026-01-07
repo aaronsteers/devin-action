@@ -338,7 +338,7 @@ runs:
         body: |
           > - 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
           >
-          > ✅ **Devin AI session ${{ inputs.session-id && 'message sent' || 'created' }} successfully!**
+          > ✅ **Devin AI session ${{ inputs.session-id != '' && 'message sent' || 'created' }} successfully!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id
@@ -348,7 +348,7 @@ runs:
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: confused
         body: |
-          > ❌ **Failed to ${{ inputs.session-id && 'send message to' || 'create' }} Devin AI session.**
+          > ❌ **Failed to ${{ inputs.session-id != '' && 'send message to' || 'create' }} Devin AI session.**
           >
           > - ⚙️ [Link to job logs.](${{ steps.vars.outputs.run-url }})
           >

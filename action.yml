@@ -35,6 +35,10 @@ inputs:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
     default: "false"
+  reuse-session:
+    description: "If 'true', the action will look for an existing Devin session URL in the issue/PR body and send a message to that session instead of creating a new one"
+    required: false
+    default: "false"
 
 outputs:
   session-id:
@@ -43,6 +47,9 @@ outputs:
   session-url:
     description: "The URL to view the Devin session"
     value: ${{ steps.devin-session.outputs.session-url }}
+  session-reused:
+    description: "Whether an existing session was reused ('true' or 'false')"
+    value: ${{ steps.devin-session.outputs.session-reused }}
   prompt:
     description: "The base64-encoded prompt sent to Devin"
     value: ${{ steps.build-prompt.outputs.prompt }}
@@ -90,10 +97,21 @@ runs:
           ISSUE_JSON=$(gh api repos/${{ github.repository }}/issues/${{ inputs.issue-number }})
           issue_title=$(jq -r .title <<< "$ISSUE_JSON")
           issue_author=$(jq -r .user.login <<< "$ISSUE_JSON")
+          issue_body=$(jq -r '.body // ""' <<< "$ISSUE_JSON")
           issue_url="https://github.com/${{ github.repository }}/issues/${{ inputs.issue-number }}"
 
           prompt_parts+=("Issue #${{ inputs.issue-number }} by @${issue_author}: ${issue_title}")
           prompt_parts+=("Issue URL: ${issue_url}")
+
+          # Look for existing Devin session URL in issue body if reuse-session is enabled
+          if [[ "${{ inputs.reuse-session }}" == 'true' && -n "$issue_body" ]]; then
+            echo "Looking for existing Devin session URL in issue body..."
+            # Match Devin session URLs: https://app.devin.ai/sessions/{session_id}
+            existing_session_id=$(echo "$issue_body" | grep -oP 'https://app\.devin\.ai/sessions/\K[a-zA-Z0-9]+' | head -1 || true)
+            if [[ -n "$existing_session_id" ]]; then
+              echo "Found existing Devin session ID: $existing_session_id"
+            fi
+          fi
         fi
 
         # Add playbook macro reference if playbook-macro is provided
@@ -142,6 +160,9 @@ runs:
         printf '%s\n' "$final_prompt" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
+        # Save existing session ID if found (for session reuse)
+        echo "existing_session_id=${existing_session_id:-}" >> $GITHUB_OUTPUT
+
     - name: Generate run link
       id: vars
       shell: bash
@@ -167,7 +188,8 @@ runs:
       run: |
         set -euo pipefail
 
-        echo "Creating Devin session..."
+        # Check if we should reuse an existing session
+        existing_session_id="${{ steps.build-prompt.outputs.existing_session_id }}"
 
         # Decode the base64-encoded prompt to handle special characters safely
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
@@ -246,43 +268,91 @@ runs:
           echo "👀 Dry run enabled, exiting early before making API call"
           echo "👀 Request payload:"
           cat devin_request.json | jq
+          if [[ -n "$existing_session_id" ]]; then
+            echo "👀 Would send message to existing session: $existing_session_id"
+          else
+            echo "👀 Would create new session"
+          fi
           exit 0
         fi
 
-        # Make API call to Devin
-        response=$(curl -s -X POST \
-          -H "Authorization: Bearer ${DEVIN_TOKEN}" \
-          -H "Content-Type: application/json" \
-          -d @devin_request.json \
-          "https://api.devin.ai/v1/sessions" || echo "API_CALL_FAILED")
+        # Check if we should reuse an existing session or create a new one
+        if [[ -n "$existing_session_id" ]]; then
+          echo "Sending message to existing Devin session: $existing_session_id"
 
-        if [[ "$response" == "API_CALL_FAILED" ]]; then
-          echo "Failed to call Devin API"
-          exit 1
+          # Prepare the message payload
+          jq -n --arg message "$decoded_prompt" '{"message": $message}' > devin_message.json
+
+          echo "::group::📤 Devin Message API Request"
+          cat devin_message.json | jq
+          echo "::endgroup::"
+
+          # Make API call to send message to existing session
+          response=$(curl -s -X POST \
+            -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d @devin_message.json \
+            "https://api.devin.ai/v1/sessions/${existing_session_id}/message" || echo "API_CALL_FAILED")
+
+          if [[ "$response" == "API_CALL_FAILED" ]]; then
+            echo "Failed to send message to existing Devin session"
+            exit 1
+          fi
+
+          echo "::group::📥 Devin Message API Response"
+          echo "$response" | jq
+          echo "::endgroup::"
+
+          # Use the existing session ID and construct the URL
+          session_id="$existing_session_id"
+          session_url="https://app.devin.ai/sessions/${existing_session_id}"
+
+          echo "Message sent to existing Devin session!"
+          echo "Session ID: $session_id"
+          echo "Session URL: $session_url"
+
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-reused=true" >> $GITHUB_OUTPUT
+        else
+          echo "Creating new Devin session..."
+
+          # Make API call to Devin
+          response=$(curl -s -X POST \
+            -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d @devin_request.json \
+            "https://api.devin.ai/v1/sessions" || echo "API_CALL_FAILED")
+
+          if [[ "$response" == "API_CALL_FAILED" ]]; then
+            echo "Failed to call Devin API"
+            exit 1
+          fi
+
+          echo "::group::📥 Devin API Response"
+          echo "$response" | jq
+          echo "::endgroup::"
+
+          # Extract session information
+          session_id=$(echo "$response" | jq -r '.session_id // .id // empty')
+          session_url=$(echo "$response" | jq -r '.session_url // .url // empty')
+
+          if [[ -z "$session_id" ]]; then
+            echo "Failed to extract session ID from Devin API response"
+            exit 1
+          fi
+
+          echo "Devin session created successfully!"
+          echo "Session ID: $session_id"
+          echo "Session URL: $session_url"
+
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-reused=false" >> $GITHUB_OUTPUT
         fi
 
-        echo "::group::📥 Devin API Response"
-        echo "$response" | jq
-        echo "::endgroup::"
-
-        # Extract session information
-        session_id=$(echo "$response" | jq -r '.session_id // .id // empty')
-        session_url=$(echo "$response" | jq -r '.session_url // .url // empty')
-
-        if [[ -z "$session_id" ]]; then
-          echo "Failed to extract session ID from Devin API response"
-          exit 1
-        fi
-
-        echo "Devin session created successfully!"
-        echo "Session ID: $session_id"
-        echo "Session URL: $session_url"
-
-        echo "session-id=$session_id" >> $GITHUB_OUTPUT
-        echo "session-url=$session_url" >> $GITHUB_OUTPUT
-
-    - name: Append success comment
-      if: steps.comment-start.outputs.comment-id && success()
+    - name: Append success comment (new session)
+      if: steps.comment-start.outputs.comment-id && success() && steps.devin-session.outputs.session-reused != 'true'
       uses: peter-evans/create-or-update-comment@v4
       with:
         token: ${{ inputs.github-token }}
@@ -292,6 +362,18 @@ runs:
           > - 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
           >
           > ✅ **Devin AI session created successfully!**
+
+    - name: Append success comment (reused session)
+      if: steps.comment-start.outputs.comment-id && success() && steps.devin-session.outputs.session-reused == 'true'
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        token: ${{ inputs.github-token }}
+        comment-id: ${{ steps.comment-start.outputs.comment-id }}
+        reactions: hooray
+        body: |
+          > - 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
+          >
+          > ✅ **Message sent to existing Devin AI session!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id

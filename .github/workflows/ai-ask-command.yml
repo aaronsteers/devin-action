@@ -35,3 +35,4 @@ jobs:
           devin-token: ${{ secrets.DEVIN_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           start-message: "💡 **Getting AI assistance...**"
+          reuse-session: 'true'

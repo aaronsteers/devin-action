@@ -29,10 +29,10 @@ inputs:
     required: false
     default: "🤖 **Starting Devin AI session...**"
   tags:
-    description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided. Cannot be used with session-id."
+    description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided. Cannot be used with reuse-session."
     required: false
-  session-id:
-    description: "Existing Devin session ID to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with 'tags' input."
+  reuse-session:
+    description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input."
     required: false
   dry-run:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
@@ -65,9 +65,9 @@ runs:
       run: |
         set -euo pipefail
 
-        # Check mutual exclusivity: session-id cannot be used with tags
-        if [[ -n "${{ inputs.session-id }}" && -n "${{ inputs.tags }}" ]]; then
-          echo "::error::The 'session-id' and 'tags' inputs are mutually exclusive. When injecting a message into an existing session, tags cannot be specified."
+        # Check mutual exclusivity: reuse-session cannot be used with tags
+        if [[ -n "${{ inputs.reuse-session }}" && -n "${{ inputs.tags }}" ]]; then
+          echo "::error::The 'reuse-session' and 'tags' inputs are mutually exclusive. When injecting a message into an existing session, tags cannot be specified."
           exit 1
         fi
 
@@ -187,9 +187,20 @@ runs:
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
 
         # Check if we're injecting into an existing session or creating a new one
-        if [[ -n "${{ inputs.session-id }}" ]]; then
+        if [[ -n "${{ inputs.reuse-session }}" ]]; then
           # ===== INJECT MESSAGE INTO EXISTING SESSION =====
-          session_id="${{ inputs.session-id }}"
+          reuse_input="${{ inputs.reuse-session }}"
+          
+          # Parse session ID from URL if a URL is provided
+          if [[ "$reuse_input" == *"app.devin.ai/sessions/"* ]]; then
+            # Extract session ID from URL (e.g., https://app.devin.ai/sessions/abc123)
+            session_id=$(echo "$reuse_input" | sed 's|.*app.devin.ai/sessions/||' | sed 's|[?#].*||')
+            echo "Parsed session ID from URL: $session_id"
+          else
+            # Assume it's already a session ID
+            session_id="$reuse_input"
+          fi
+          
           session_url="https://app.devin.ai/sessions/${session_id}"
 
           echo "Injecting message into existing Devin session..."
@@ -366,7 +377,7 @@ runs:
         body: |
           > - 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
           >
-          > ✅ **Devin AI session ${{ inputs.session-id != '' && 'message sent' || 'created' }} successfully!**
+          > ✅ **Devin AI session ${{ inputs.reuse-session != '' && 'message sent' || 'created' }} successfully!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id
@@ -376,7 +387,7 @@ runs:
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: confused
         body: |
-          > ❌ **Failed to ${{ inputs.session-id != '' && 'send message to' || 'create' }} Devin AI session.**
+          > ❌ **Failed to ${{ inputs.reuse-session != '' && 'send message to' || 'create' }} Devin AI session.**
           >
           > - ⚙️ [Link to job logs.](${{ steps.vars.outputs.run-url }})
           >

@@ -26,8 +26,8 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `devin-token`  | Devin API Token (required for authentication)                              | true     |          |
 | `github-token` | GitHub Token (required for posting comments and accessing repo context)    | false    |          |
 | `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
-| `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided. Cannot be used with `session-id`. | false    |          |
-| `session-id`   | Existing Devin session ID to inject a message into. When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
+| `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided. Cannot be used with `reuse-session`. | false    |          |
+| `reuse-session`| Existing Devin session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
 
 ## Session Tagging
 
@@ -114,20 +114,33 @@ This action is designed to work with slash commands in issue and PR comments. Th
 
 ### Injecting a Message into an Existing Session
 
-Instead of creating a new session, you can inject a message into an existing Devin session using the `session-id` input. This is useful for long-running workflows that need to send multiple messages to the same session.
+Instead of creating a new session, you can inject a message into an existing Devin session using the `reuse-session` input. This is useful for long-running workflows that need to send multiple messages to the same session.
+
+You can provide either a session ID or a full session URL:
 
 ```yaml
+# Using a session ID
 - name: Send Message to Existing Devin Session
   uses: aaronsteers/devin-action@v1
   with:
-    session-id: 'c002a79b24b74f5b918ebc7dc6c5205b'
+    reuse-session: 'c002a79b24b74f5b918ebc7dc6c5205b'
+    prompt-text: |
+      New task triggered at ${{ github.event.repository.updated_at }}
+      Please process the following scope: all certified connectors
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+
+# Using a session URL (session ID is automatically extracted)
+- name: Send Message to Existing Devin Session
+  uses: aaronsteers/devin-action@v1
+  with:
+    reuse-session: 'https://app.devin.ai/sessions/c002a79b24b74f5b918ebc7dc6c5205b'
     prompt-text: |
       New task triggered at ${{ github.event.repository.updated_at }}
       Please process the following scope: all certified connectors
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
 ```
 
-**Note:** The `session-id` input is mutually exclusive with `tags`. When injecting a message into an existing session, tags cannot be specified since they are only applicable when creating new sessions.
+**Note:** The `reuse-session` input is mutually exclusive with `tags`. When injecting a message into an existing session, tags cannot be specified since they are only applicable when creating new sessions.
 
 ## Context Gathering
 

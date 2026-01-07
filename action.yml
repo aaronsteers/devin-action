@@ -107,7 +107,8 @@ runs:
           if [[ "${{ inputs.reuse-session }}" == 'true' && -n "$issue_body" ]]; then
             echo "Looking for existing Devin session URL in issue body..."
             # Match Devin session URLs: https://app.devin.ai/sessions/{session_id}
-            existing_session_id=$(echo "$issue_body" | grep -oP 'https://app\.devin\.ai/sessions/\K[a-zA-Z0-9]+' | head -1 || true)
+            # Use tail -1 to get the LAST session URL (most recent) when multiple exist
+            existing_session_id=$(echo "$issue_body" | grep -oP 'https://app\.devin\.ai/sessions/\K[a-zA-Z0-9]+' | tail -1 || true)
             if [[ -n "$existing_session_id" ]]; then
               echo "Found existing Devin session ID: $existing_session_id"
             fi

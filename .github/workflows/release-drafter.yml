@@ -1,6 +1,7 @@
 name: Release Drafter
 
 on:
+  workflow_dispatch: {}
   push:
     branches:
       - main
@@ -10,12 +11,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  update_release_draft:
+  draft_release:
+    name: Draft Release
     permissions:
       contents: write
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - uses: aaronsteers/semantic-pr-release-drafter@v0.3.0
+      - name: Create or update draft release
+        uses: aaronsteers/semantic-pr-release-drafter@v0.4.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

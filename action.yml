@@ -10,7 +10,7 @@ inputs:
     description: "Comment ID (optional, for reply chaining and context)"
     required: false
   issue-number:
-    description: "Issue number (optional, for context)"
+    description: "Issue or PR number (optional, for context). This can be either an issue number or a pull request number."
     required: false
   playbook-macro:
     description: "Playbook macro (optional, for structured workflows) - should start with '!' (e.g., !my_playbook)"
@@ -29,16 +29,49 @@ inputs:
     required: false
     default: "🤖 **Starting Devin AI session...**"
   tags:
-    description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided"
+    description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided. Cannot be used with reuse-session."
+    required: false
+  reuse-session:
+    description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input."
     required: false
   dry-run:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
     default: "false"
 
+outputs:
+  session-id:
+    description: "The Devin session ID"
+    value: ${{ steps.inject-message.outputs.session-id || steps.create-session.outputs.session-id }}
+  session-url:
+    description: "The URL to view the Devin session"
+    value: ${{ steps.inject-message.outputs.session-url || steps.create-session.outputs.session-url }}
+  prompt:
+    description: "The base64-encoded prompt sent to Devin"
+    value: ${{ steps.build-prompt.outputs.prompt }}
+  prompt_readable:
+    description: "The human-readable prompt sent to Devin"
+    value: ${{ steps.build-prompt.outputs.prompt_readable }}
+  run-url:
+    description: "The GitHub Actions run URL"
+    value: ${{ steps.vars.outputs.run-url }}
+
 runs:
   using: "composite"
   steps:
+
+    - name: Validate inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Check mutual exclusivity: reuse-session cannot be used with tags
+        if [[ -n "${{ inputs.reuse-session }}" && -n "${{ inputs.tags }}" ]]; then
+          echo "::error::The 'reuse-session' and 'tags' inputs are mutually exclusive. When injecting a message into an existing session, tags cannot be specified."
+          exit 1
+        fi
+
+        echo "Input validation passed"
 
     - name: Build Devin prompt
       id: build-prompt
@@ -55,9 +88,11 @@ runs:
         if [[ -n "${{ inputs.comment-id }}" ]]; then
           echo "Fetching comment context..."
           COMMENT_JSON=$(gh api repos/${{ github.repository }}/issues/comments/${{ inputs.comment-id }})
-          comment_body=$(echo $COMMENT_JSON | jq -r .body)
-          comment_author=$(echo $COMMENT_JSON | jq -r .user.login)
+          comment_body=$(jq -r .body <<< "$COMMENT_JSON")
+          comment_author=$(jq -r .user.login <<< "$COMMENT_JSON")
+          comment_url=$(jq -r .html_url <<< "$COMMENT_JSON")
 
+          prompt_parts+=("Comment URL: ${comment_url}")
           prompt_parts+=("Comment from @${comment_author}: ${comment_body}")
 
           # Add PR response instruction when comment-id is provided
@@ -69,8 +104,8 @@ runs:
         if [[ -n "${{ inputs.issue-number }}" ]]; then
           echo "Fetching issue context..."
           ISSUE_JSON=$(gh api repos/${{ github.repository }}/issues/${{ inputs.issue-number }})
-          issue_title=$(echo $ISSUE_JSON | jq -r .title)
-          issue_author=$(echo $ISSUE_JSON | jq -r .user.login)
+          issue_title=$(jq -r .title <<< "$ISSUE_JSON")
+          issue_author=$(jq -r .user.login <<< "$ISSUE_JSON")
           issue_url="https://github.com/${{ github.repository }}/issues/${{ inputs.issue-number }}"
 
           prompt_parts+=("Issue #${{ inputs.issue-number }} by @${issue_author}: ${issue_title}")
@@ -96,11 +131,11 @@ runs:
           exit 1
         fi
 
-        # Join prompt parts with newlines
+        # Join prompt parts with actual newlines (using $'\n' for real newlines)
         final_prompt=""
         for part in "${prompt_parts[@]}"; do
           if [[ -n "$final_prompt" ]]; then
-            final_prompt="${final_prompt}\n\n${part}"
+            final_prompt="${final_prompt}"$'\n\n'"${part}"
           else
             final_prompt="$part"
           fi
@@ -108,19 +143,19 @@ runs:
 
         echo "Final prompt built successfully"
         echo "::group::📝 Devin Prompt Preview"
-        echo -e "$final_prompt"
+        printf '%s\n' "$final_prompt"
         echo "::endgroup::"
 
         # Save prompt to output (properly escaped for safe YAML/JSON processing)
         # Use base64 encoding to safely handle any special characters including quotes
         echo "prompt<<EOF" >> $GITHUB_OUTPUT
-        echo -n "$final_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
+        printf '%s' "$final_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
         echo >> $GITHUB_OUTPUT  # Add newline before EOF
         echo "EOF" >> $GITHUB_OUTPUT
 
         # Also save a human-readable version for debugging
         echo "prompt_readable<<EOF" >> $GITHUB_OUTPUT
-        echo -e "$final_prompt" >> $GITHUB_OUTPUT
+        printf '%s\n' "$final_prompt" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Generate run link
@@ -133,6 +168,7 @@ runs:
       uses: peter-evans/create-or-update-comment@v4
       id: comment-start
       with:
+        token: ${{ inputs.github-token }}
         comment-id: ${{ inputs.comment-id }}
         issue-number: ${{ inputs.issue-number }}
         body: |
@@ -140,7 +176,7 @@ runs:
           >
 
     - name: Find previous Devin session comment
-      if: inputs.comment-id || inputs.issue-number
+      if: (inputs.comment-id || inputs.issue-number) && inputs.reuse-session == ''
       id: find-session
       uses: peter-evans/find-comment@v3
       with:
@@ -154,9 +190,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        
+
         previous_comment="${{ steps.find-session.outputs.comment-body }}"
-        
+
         echo "Found previous comment, attempting to extract session ID..."
         if [[ "$previous_comment" =~ https://app\.devin\.ai/sessions/([a-fA-F0-9-]+) ]]; then
           session_id="${BASH_REMATCH[1]}"
@@ -168,37 +204,192 @@ runs:
           echo "Could not extract session ID from previous comment"
         fi
 
-    - name: Create new Devin session
-      if: steps.extract-session.outputs.session-id == ''
-      id: create-session
+    - name: Resolve session vars
+      id: resolve-vars
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # ===== DEBUG: Print input summary =====
+        echo "::group::🔍 Input Summary"
+        echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (explicit input)' || ([[ -n "${{ steps.extract-session.outputs.session-id }}" ]] && echo 'REUSE SESSION (auto-detected from comment)' || echo 'CREATE NEW SESSION'))"
+        echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "auto-detected session: $([[ -n "${{ steps.extract-session.outputs.session-id }}" ]] && echo 'SET (${{ steps.extract-session.outputs.session-id }})' || echo 'NOT SET')"
+        echo "tags: $([[ -n "${{ inputs.tags }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "dry-run: ${{ inputs.dry-run }}"
+        echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
+        echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
+        echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
+        echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "::endgroup::"
+
+        # Parse reuse-session input if provided (explicit takes priority)
+        if [[ -n "${{ inputs.reuse-session }}" ]]; then
+          reuse_input="${{ inputs.reuse-session }}"
+          
+          echo "::group::🔄 Session Reuse Configuration (explicit input)"
+          echo "Raw reuse-session input: $reuse_input"
+          
+          # Parse session ID from URL if a URL is provided
+          if [[ "$reuse_input" == *"app.devin.ai/sessions/"* ]]; then
+            # Extract session ID from URL (e.g., https://app.devin.ai/sessions/abc123)
+            session_id=$(echo "$reuse_input" | sed 's|.*app.devin.ai/sessions/||' | sed 's|[?#].*||')
+            echo "Input type: URL"
+            echo "Parsed session ID: $session_id"
+          else
+            # Assume it's already a session ID
+            session_id="$reuse_input"
+            echo "Input type: Session ID (direct)"
+          fi
+          
+          # Validate that session_id is not empty after parsing
+          if [[ -z "$session_id" ]]; then
+            echo "::error::Failed to extract session ID from reuse-session input: '$reuse_input'"
+            exit 1
+          fi
+          
+          session_url="https://app.devin.ai/sessions/${session_id}"
+          echo "Final session ID: $session_id"
+          echo "Final session URL: $session_url"
+          echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          echo "::endgroup::"
+          
+          # Output resolved values
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+
+        # Fall back to auto-detected session from previous comment
+        elif [[ -n "${{ steps.extract-session.outputs.session-id }}" ]]; then
+          session_id="${{ steps.extract-session.outputs.session-id }}"
+          session_url="${{ steps.extract-session.outputs.session-url }}"
+
+          echo "::group::🔄 Session Reuse Configuration (auto-detected from comment)"
+          echo "Auto-detected session ID: $session_id"
+          echo "Auto-detected session URL: $session_url"
+          echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          echo "::endgroup::"
+
+          # Output resolved values
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Inject message into existing session
+      id: inject-message
+      if: steps.resolve-vars.outputs.session-id != ''
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
       run: |
         set -euo pipefail
-        
+
+        # Get resolved session vars
+        session_id="${{ steps.resolve-vars.outputs.session-id }}"
+        session_url="${{ steps.resolve-vars.outputs.session-url }}"
+
+        echo "Injecting message into existing Devin session..."
+        echo "Session ID: $session_id"
+        echo "Session URL: $session_url"
+
+        # Decode the base64-encoded prompt
+        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
+        echo "Prompt length: ${#decoded_prompt} characters"
+
+        # Prepare the message API request payload
+        jq -n \
+          --arg message "$decoded_prompt" \
+          '{
+            "message": $message
+          }' > devin_request.json
+
+        echo "::group::📤 Devin Message API Request"
+        cat devin_request.json | jq
+        echo "::endgroup::"
+
+        if [[ "${{ inputs.dry-run }}" == 'true' ]]; then
+          echo "👀 Dry run enabled, exiting early before making API call"
+          echo "::group::📤 Action Outputs (dry-run)"
+          echo "session-id=$session_id"
+          echo "session-url=$session_url"
+          echo "::endgroup::"
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Make API call to send message to existing session
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+          -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d @devin_request.json \
+          "https://api.devin.ai/v1/sessions/${session_id}/message")
+
+        # Extract HTTP status code
+        http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d':' -f2)
+        response_body=$(echo "$response" | sed '/HTTP_STATUS:/d')
+
+        echo "::group::📥 Devin API Response"
+        echo "HTTP Status: $http_status"
+        echo "$response_body" | jq . 2>/dev/null || echo "$response_body"
+        echo "::endgroup::"
+
+        if [[ "$http_status" -ge 200 && "$http_status" -lt 300 ]]; then
+          echo "Message injected successfully into Devin session!"
+          echo "::group::📤 Action Outputs"
+          echo "session-id=$session_id"
+          echo "session-url=$session_url"
+          echo "::endgroup::"
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        else
+          echo "::error::Failed to inject message into Devin session. HTTP Status: $http_status"
+          echo "Response: $response_body"
+          exit 1
+        fi
+
+    - name: Create new Devin session
+      id: create-session
+      if: steps.resolve-vars.outputs.session-id == ''
+      shell: bash
+      env:
+        DEVIN_TOKEN: ${{ inputs.devin-token }}
+      run: |
+        set -euo pipefail
+
+        echo "::group::🆕 New Session Configuration"
+        echo "API endpoint: POST /v1/sessions"
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "::endgroup::"
+
         echo "Creating new Devin session..."
 
-        # Decode the base64-encoded prompt to handle special characters safely
+        # Decode the base64-encoded prompt
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
+        echo "Prompt length: ${#decoded_prompt} characters"
 
         # Build automatic tags
         automatic_tags=("gh-actions-trigger")
 
         # Add playbook tag if playbook-macro is provided
         if [[ -n "${{ inputs.playbook-macro }}" ]]; then
+          # Extract macro name (remove leading ! if present)
           macro_name="${{ inputs.playbook-macro }}"
-          macro_name="${macro_name#!}"
+          macro_name="${macro_name#!}"  # Remove leading ! if present
           automatic_tags+=("playbook-${macro_name}")
         fi
 
         # Process additional tags input if provided (supports both CSV and line-delimited)
         additional_tags=()
         if [[ -n "${{ inputs.tags }}" ]]; then
+          # Handle both CSV and line-delimited formats
+          # First split by newlines, then by commas for each line
           while IFS= read -r line; do
             if [[ -n "$line" ]]; then
+              # Split line by commas
               IFS=',' read -ra tag_array <<< "$line"
               for tag in "${tag_array[@]}"; do
+                # Trim whitespace and add non-empty tags
                 trimmed_tag=$(echo "$tag" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 if [[ -n "$trimmed_tag" ]]; then
                   additional_tags+=("$trimmed_tag")
@@ -210,26 +401,37 @@ runs:
 
         # Combine automatic and additional tags
         all_tags=("${automatic_tags[@]}" "${additional_tags[@]}")
+
+        # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
 
-        # Prepare the API request payload
+        # Build metadata object with optional fields
+        metadata_json=$(jq -n \
+          --arg run_id "${{ github.run_id }}" \
+          --arg repository "${{ github.repository }}" \
+          --arg comment_id "${{ inputs.comment-id }}" \
+          --arg issue_number "${{ inputs.issue-number }}" \
+          '{
+            "github_run_id": $run_id,
+            "github_repository": $repository,
+            "triggered_by": "github_action"
+          }
+          | if $comment_id != "" then . + {"github_comment_id": $comment_id, "github_comment_url": "https://github.com/\($repository)/issues/comments/\($comment_id)"} else . end
+          | if $issue_number != "" then . + {"github_issue_number": $issue_number, "github_issue_url": "https://github.com/\($repository)/issues/\($issue_number)"} else . end')
+
+        # Prepare the API request payload using jq to properly escape JSON
         jq -n \
           --arg prompt "$decoded_prompt" \
           --arg repo_url "https://github.com/${{ github.repository }}" \
           --arg branch "${{ github.ref_name }}" \
-          --arg run_id "${{ github.run_id }}" \
-          --arg repository "${{ github.repository }}" \
           --argjson tags "$tags_array" \
+          --argjson metadata "$metadata_json" \
           '{
             "prompt": $prompt,
             "repository_url": $repo_url,
             "branch": $branch,
             "tags": $tags,
-            "metadata": {
-              "github_run_id": $run_id,
-              "github_repository": $repository,
-              "triggered_by": "github_action"
-            }
+            "metadata": $metadata
           }' > devin_request.json
 
         echo "::group::📤 Devin API Request"
@@ -267,113 +469,35 @@ runs:
         fi
 
         echo "Devin session created successfully!"
-        echo "Session ID: $session_id"
-        echo "Session URL: $session_url"
-        
-        echo "session-id=$session_id" >> $GITHUB_OUTPUT
-        echo "session-url=$session_url" >> $GITHUB_OUTPUT
-
-    - name: Send message to existing session
-      if: steps.extract-session.outputs.session-id != ''
-      id: send-message
-      shell: bash
-      env:
-        DEVIN_TOKEN: ${{ inputs.devin-token }}
-      run: |
-        set -euo pipefail
-        
-        session_id="${{ steps.extract-session.outputs.session-id }}"
-        session_url="${{ steps.extract-session.outputs.session-url }}"
-        
-        echo "Sending message to existing Devin session $session_id..."
-
-        # Decode the base64-encoded prompt to handle special characters safely
-        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
-        
-        # Prepare the message API request payload
-        jq -n \
-          --arg message "$decoded_prompt" \
-          '{
-            "message": $message
-          }' > devin_request.json
-
-        echo "::group::📤 Devin Message API Request"
-        cat devin_request.json | jq
+        echo "::group::📤 Action Outputs"
+        echo "session-id=$session_id"
+        echo "session-url=$session_url"
         echo "::endgroup::"
 
-        if [[ "${{ inputs.dry-run }}" == 'true' ]]; then
-          echo "👀 Dry run enabled, exiting early before making API call"
-          exit 0
-        fi
-
-        # Make API call to send message to existing session
-        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
-          -H "Authorization: Bearer ${DEVIN_TOKEN}" \
-          -H "Content-Type: application/json" \
-          -d @devin_request.json \
-          "https://api.devin.ai/v1/sessions/${session_id}/message" || echo "API_CALL_FAILED")
-
-        if [[ "$response" == "API_CALL_FAILED" ]]; then
-          echo "Failed to call Devin message API"
-          exit 1
-        fi
-
-        # Extract HTTP status code
-        http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d: -f2)
-        
-        if [[ "$http_status" == "204" ]]; then
-          echo "Message sent successfully to existing session!"
-          echo "Session ID: $session_id"
-          echo "Session URL: $session_url"
-          
-          echo "session-id=$session_id" >> $GITHUB_OUTPUT
-          echo "session-url=$session_url" >> $GITHUB_OUTPUT
-        else
-          echo "Unexpected response from message API (status: $http_status)"
-          echo "$response" | grep -v "HTTP_STATUS:"
-          exit 1
-        fi
-
-    - name: Set session outputs
-      id: devin-session
-      shell: bash
-      run: |
-        set -euo pipefail
-        
-        # Get session info from whichever step ran
-        if [[ -n "${{ steps.send-message.outputs.session-id }}" ]]; then
-          session_id="${{ steps.send-message.outputs.session-id }}"
-          session_url="${{ steps.send-message.outputs.session-url }}"
-          session_reused="true"
-        else
-          session_id="${{ steps.create-session.outputs.session-id }}"
-          session_url="${{ steps.create-session.outputs.session-url }}"
-          session_reused="false"
-        fi
-        
         echo "session-id=$session_id" >> $GITHUB_OUTPUT
         echo "session-url=$session_url" >> $GITHUB_OUTPUT
-        echo "session-reused=$session_reused" >> $GITHUB_OUTPUT
 
     - name: Append success comment
       if: steps.comment-start.outputs.comment-id && success()
       uses: peter-evans/create-or-update-comment@v4
       with:
+        token: ${{ inputs.github-token }}
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: hooray
         body: |
-          > - 🔗 **Session URL:** ${{ steps.devin-session.outputs.session-url }}
+          > - 🔗 **Session URL:** ${{ steps.inject-message.outputs.session-url || steps.create-session.outputs.session-url }}
           >
-          > ✅ **Devin AI session ${{ steps.devin-session.outputs.session-reused == 'true' && 'updated' || 'created' }} successfully!**
+          > ✅ **Devin AI session ${{ steps.resolve-vars.outputs.session-id != '' && 'message sent' || 'created' }} successfully!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id
       uses: peter-evans/create-or-update-comment@v4
       with:
+        token: ${{ inputs.github-token }}
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: confused
         body: |
-          > ❌ **Failed to create Devin AI session.**
+          > ❌ **Failed to ${{ steps.resolve-vars.outputs.session-id != '' && 'send message to' || 'create' }} Devin AI session.**
           >
           > - ⚙️ [Link to job logs.](${{ steps.vars.outputs.run-url }})
           >

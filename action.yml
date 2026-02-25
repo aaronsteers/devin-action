@@ -175,6 +175,35 @@ runs:
           > ${{ inputs.start-message || '🤖 **Starting Devin AI session...**' }}
           >
 
+    - name: Find previous Devin session comment
+      if: (inputs.comment-id || inputs.issue-number) && inputs.reuse-session == ''
+      id: find-session
+      uses: peter-evans/find-comment@v3
+      with:
+        issue-number: ${{ inputs.issue-number }}
+        body-includes: 'https://app.devin.ai/sessions/'
+        direction: last
+
+    - name: Extract session ID from previous comment
+      if: steps.find-session.outputs.comment-body != ''
+      id: extract-session
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        previous_comment="${{ steps.find-session.outputs.comment-body }}"
+
+        echo "Found previous comment, attempting to extract session ID..."
+        if [[ "$previous_comment" =~ https://app\.devin\.ai/sessions/([a-fA-F0-9-]+) ]]; then
+          session_id="${BASH_REMATCH[1]}"
+          session_url="https://app.devin.ai/sessions/${session_id}"
+          echo "Found existing session ID: $session_id"
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        else
+          echo "Could not extract session ID from previous comment"
+        fi
+
     - name: Resolve session vars
       id: resolve-vars
       shell: bash
@@ -183,8 +212,9 @@ runs:
 
         # ===== DEBUG: Print input summary =====
         echo "::group::🔍 Input Summary"
-        echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (inject message)' || echo 'CREATE NEW SESSION')"
+        echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (explicit input)' || ([[ -n "${{ steps.extract-session.outputs.session-id }}" ]] && echo 'REUSE SESSION (auto-detected from comment)' || echo 'CREATE NEW SESSION'))"
         echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "auto-detected session: $([[ -n "${{ steps.extract-session.outputs.session-id }}" ]] && echo 'SET (${{ steps.extract-session.outputs.session-id }})' || echo 'NOT SET')"
         echo "tags: $([[ -n "${{ inputs.tags }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "dry-run: ${{ inputs.dry-run }}"
         echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
@@ -193,11 +223,11 @@ runs:
         echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "::endgroup::"
 
-        # Parse reuse-session input if provided
+        # Parse reuse-session input if provided (explicit takes priority)
         if [[ -n "${{ inputs.reuse-session }}" ]]; then
           reuse_input="${{ inputs.reuse-session }}"
           
-          echo "::group::🔄 Session Reuse Configuration"
+          echo "::group::🔄 Session Reuse Configuration (explicit input)"
           echo "Raw reuse-session input: $reuse_input"
           
           # Parse session ID from URL if a URL is provided
@@ -227,11 +257,26 @@ runs:
           # Output resolved values
           echo "session-id=$session_id" >> $GITHUB_OUTPUT
           echo "session-url=$session_url" >> $GITHUB_OUTPUT
+
+        # Fall back to auto-detected session from previous comment
+        elif [[ -n "${{ steps.extract-session.outputs.session-id }}" ]]; then
+          session_id="${{ steps.extract-session.outputs.session-id }}"
+          session_url="${{ steps.extract-session.outputs.session-url }}"
+
+          echo "::group::🔄 Session Reuse Configuration (auto-detected from comment)"
+          echo "Auto-detected session ID: $session_id"
+          echo "Auto-detected session URL: $session_url"
+          echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          echo "::endgroup::"
+
+          # Output resolved values
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$session_url" >> $GITHUB_OUTPUT
         fi
 
     - name: Inject message into existing session
       id: inject-message
-      if: inputs.reuse-session != ''
+      if: steps.resolve-vars.outputs.session-id != ''
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -304,7 +349,7 @@ runs:
 
     - name: Create new Devin session
       id: create-session
-      if: inputs.reuse-session == ''
+      if: steps.resolve-vars.outputs.session-id == ''
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -442,7 +487,7 @@ runs:
         body: |
           > - 🔗 **Session URL:** ${{ steps.inject-message.outputs.session-url || steps.create-session.outputs.session-url }}
           >
-          > ✅ **Devin AI session ${{ inputs.reuse-session != '' && 'message sent' || 'created' }} successfully!**
+          > ✅ **Devin AI session ${{ steps.resolve-vars.outputs.session-id != '' && 'message sent' || 'created' }} successfully!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id
@@ -452,7 +497,7 @@ runs:
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: confused
         body: |
-          > ❌ **Failed to ${{ inputs.reuse-session != '' && 'send message to' || 'create' }} Devin AI session.**
+          > ❌ **Failed to ${{ steps.resolve-vars.outputs.session-id != '' && 'send message to' || 'create' }} Devin AI session.**
           >
           > - ⚙️ [Link to job logs.](${{ steps.vars.outputs.run-url }})
           >

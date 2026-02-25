@@ -458,7 +458,7 @@ runs:
 
     - name: Wait for session status
       id: wait-for-status
-      if: inputs.wait-for-status-in != ''
+      if: inputs.wait-for-status-in != '' && inputs.dry-run != 'true'
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -557,8 +557,8 @@ runs:
               echo >> $GITHUB_OUTPUT
               echo "DEVIN_EOF" >> $GITHUB_OUTPUT
 
-              # Output: structured-output
-              structured_output=$(echo "$response_body" | jq -r '.structured_output // empty')
+              # Output: structured-output (preserve as JSON if it's an object, otherwise as string)
+              structured_output=$(echo "$response_body" | jq '.structured_output // empty')
               echo "structured-output<<DEVIN_EOF" >> $GITHUB_OUTPUT
               printf '%s' "$structured_output" >> $GITHUB_OUTPUT
               echo >> $GITHUB_OUTPUT

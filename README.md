@@ -28,6 +28,10 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
 | `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided. Cannot be used with `reuse-session`. | false    |          |
 | `reuse-session`| Existing Devin session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
+| `wait-for-status-in` | CSV of `status_enum` values to treat as terminal (e.g., `finished,stopped,blocked`). When set, polls until status matches. | false | |
+| `wait-poll-interval` | Seconds between polls when `wait-for-status-in` is set | false | `30` |
+| `wait-max-polls` | Maximum number of polls before the step fails with a timeout error | false | `40` |
+| `wait-max-api-errors` | Maximum consecutive API errors before aborting | false | `3` |
 
 ## Session Tagging
 
@@ -141,6 +145,52 @@ You can provide either a session ID or a full session URL:
 ```
 
 **Note:** The `reuse-session` input is mutually exclusive with `tags`. When injecting a message into an existing session, tags cannot be specified since they are only applicable when creating new sessions.
+
+### Waiting for Session Completion
+
+Use `wait-for-status-in` to poll the Devin session until it reaches a terminal state. This is useful for workflows that need the session's output before proceeding (e.g., posting a summary, gating subsequent steps).
+
+**Wait during session creation (single step):**
+
+```yaml
+- uses: aaronsteers/devin-action@v1
+  id: devin
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    prompt-text: "Analyze commits and write a summary..."
+    wait-for-status-in: finished,stopped,blocked
+    wait-poll-interval: 30      # seconds between polls (default: 30)
+    wait-max-polls: 60          # max polls before timeout (default: 40)
+```
+
+**Wait on an existing session (multi-step):**
+
+```yaml
+- uses: aaronsteers/devin-action@v1
+  id: create
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    prompt-text: "Do something..."
+
+# ... other steps ...
+
+- uses: aaronsteers/devin-action@v1
+  id: wait
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    reuse-session: ${{ steps.create.outputs.session-id }}
+    wait-for-status-in: finished,stopped,blocked
+```
+
+When polling completes, the following additional outputs are available:
+
+| Output | Description |
+|--------|-------------|
+| `status` | The terminal `status_enum` value when polling completes |
+| `summary` | The last message from the session |
+| `structured-output` | The session's `structured_output` field (if any) |
+
+Typical terminal states for CI use cases: `finished`, `stopped`, `blocked`, `expired`.
 
 ## Context Gathering
 

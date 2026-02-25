@@ -38,11 +38,12 @@ inputs:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
     default: "false"
-  wait-for-status-in:
-    description: "CSV of status_enum values to treat as terminal (e.g., 'finished,stopped,blocked'). When set, polls GET /v1/sessions/{session_id} until status matches one of the provided values."
+  wait-for-stopped-status:
+    description: "If 'true', polls GET /v1/sessions/{session_id} until status_enum reaches a terminal state (finished, stopped, blocked, or expired)."
     required: false
+    default: "false"
   wait-poll-interval:
-    description: "Seconds between polls when wait-for-status-in is set"
+    description: "Seconds between polls when wait-for-stopped-status is enabled"
     required: false
     default: "30"
   wait-max-polls:
@@ -71,13 +72,13 @@ outputs:
     description: "The GitHub Actions run URL"
     value: ${{ steps.vars.outputs.run-url }}
   status:
-    description: "The terminal status_enum value when polling completes (only set when wait-for-status-in is used)"
+    description: "The terminal status_enum value when polling completes (only set when wait-for-stopped-status is enabled)"
     value: ${{ steps.wait-for-status.outputs.status }}
   summary:
-    description: "The last message from the session (only set when wait-for-status-in is used)"
+    description: "The last message from the session (only set when wait-for-stopped-status is enabled)"
     value: ${{ steps.wait-for-status.outputs.summary }}
   structured-output:
-    description: "The session's structured_output field, if any (only set when wait-for-status-in is used)"
+    description: "The session's structured_output field, if any (only set when wait-for-stopped-status is enabled)"
     value: ${{ steps.wait-for-status.outputs.structured-output }}
 
 runs:
@@ -458,7 +459,7 @@ runs:
 
     - name: Wait for session status
       id: wait-for-status
-      if: inputs.wait-for-status-in != '' && inputs.dry-run != 'true'
+      if: inputs.wait-for-stopped-status == 'true' && inputs.dry-run != 'true'
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -472,12 +473,8 @@ runs:
           exit 1
         fi
 
-        # Parse the target statuses into a bash array
-        IFS=',' read -ra target_statuses <<< "${{ inputs.wait-for-status-in }}"
-        # Trim whitespace from each status
-        for i in "${!target_statuses[@]}"; do
-          target_statuses[$i]=$(echo "${target_statuses[$i]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        done
+        # Terminal statuses that indicate the session is no longer running
+        target_statuses=("finished" "stopped" "blocked" "expired")
 
         poll_interval=${{ inputs.wait-poll-interval }}
         max_polls=${{ inputs.wait-max-polls }}

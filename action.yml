@@ -76,35 +76,32 @@ runs:
 
     - name: Validate inputs
       shell: bash
+      env:
+        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
+        INPUT_TAGS: ${{ inputs.tags }}
       run: |
         set -euo pipefail
 
         # Check mutual exclusivity: reuse-session cannot be used with tags
-        if [[ -n "${{ inputs.reuse-session }}" && -n "${{ inputs.tags }}" ]]; then
+        if [[ -n "${{ inputs.reuse-session }}" && -n "$INPUT_TAGS" ]]; then
           echo "::error::The 'reuse-session' and 'tags' inputs are mutually exclusive. When injecting a message into an existing session, tags cannot be specified."
           exit 1
         fi
 
         echo "Input validation passed"
 
-    - name: Export multiline inputs to environment
-      shell: bash
-      env:
-        _PROMPT_TEXT: ${{ inputs.prompt-text }}
-        _TAGS: ${{ inputs.tags }}
-      run: |
         # Export multiline-capable inputs to GITHUB_ENV using heredoc delimiters.
         # This avoids shell syntax errors when these values contain special
         # characters (quotes, parentheses, newlines, etc.) that would break
-        # direct ${{ }} interpolation in bash conditionals.
+        # direct ${{ }} interpolation in bash conditionals of later steps.
         {
           echo "INPUT_PROMPT_TEXT<<__DEVIN_PROMPT_EOF__"
-          printf '%s\n' "$_PROMPT_TEXT"
+          printf '%s\n' "$INPUT_PROMPT_TEXT"
           echo "__DEVIN_PROMPT_EOF__"
         } >> "$GITHUB_ENV"
         {
           echo "INPUT_TAGS<<__DEVIN_TAGS_EOF__"
-          printf '%s\n' "$_TAGS"
+          printf '%s\n' "$INPUT_TAGS"
           echo "__DEVIN_TAGS_EOF__"
         } >> "$GITHUB_ENV"
 
@@ -154,9 +151,8 @@ runs:
         fi
 
         # Add custom prompt text if provided
-        # NOTE: prompt-text is passed via INPUT_PROMPT_TEXT env var to avoid
-        # shell syntax errors when the text contains special characters
-        # (quotes, parentheses, etc.) that would break ${{ }} interpolation.
+        # NOTE: Uses INPUT_PROMPT_TEXT from GITHUB_ENV (set in Validate inputs step)
+        # to avoid shell syntax errors from direct ${{ }} interpolation of multiline text.
         if [[ -n "$INPUT_PROMPT_TEXT" ]]; then
           echo "👀 Found 'prompt-text' input"
           prompt_parts+=("$INPUT_PROMPT_TEXT")
@@ -224,12 +220,12 @@ runs:
         echo "::group::🔍 Input Summary"
         echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (inject message)' || echo 'CREATE NEW SESSION')"
         echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "tags: $([[ -n "$INPUT_TAGS" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "tags: ${{ inputs.tags != '' && 'SET' || 'NOT SET' }}"
         echo "dry-run: ${{ inputs.dry-run }}"
         echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
         echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
         echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
-        echo "prompt-text: $([[ -n "$INPUT_PROMPT_TEXT" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "prompt-text: ${{ inputs.prompt-text != '' && 'SET' || 'NOT SET' }}"
         echo "::endgroup::"
 
         # Parse reuse-session input if provided
@@ -375,8 +371,8 @@ runs:
 
         # Process additional tags input if provided (supports both CSV and line-delimited)
         additional_tags=()
-        # NOTE: tags is passed via INPUT_TAGS env var to avoid shell syntax
-        # errors when multiline tag values break ${{ }} interpolation.
+        # NOTE: Uses INPUT_TAGS from GITHUB_ENV (set in Validate inputs step)
+        # to avoid shell syntax errors from direct ${{ }} interpolation of multiline text.
         if [[ -n "$INPUT_TAGS" ]]; then
           # Handle both CSV and line-delimited formats
           # First split by newlines, then by commas for each line

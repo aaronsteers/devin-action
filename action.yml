@@ -39,7 +39,7 @@ inputs:
     required: false
     default: "false"
   wait-for-stopped-status:
-    description: "If 'true', polls GET /v1/sessions/{session_id} until status_enum reaches a terminal state (finished, stopped, blocked, or expired)."
+    description: "If 'true', polls GET /v1/sessions/{session_id} until status_enum is any non-working state."
     required: false
     default: "false"
   wait-poll-interval:
@@ -473,9 +473,6 @@ runs:
           exit 1
         fi
 
-        # Terminal statuses that indicate the session is no longer running
-        target_statuses=("finished" "stopped" "blocked" "expired")
-
         poll_interval=${{ inputs.wait-poll-interval }}
         max_polls=${{ inputs.wait-max-polls }}
         max_api_errors=${{ inputs.wait-max-api-errors }}
@@ -484,7 +481,7 @@ runs:
 
         echo "::group::⏳ Polling Configuration"
         echo "Session ID: $session_id"
-        echo "Target statuses: ${target_statuses[*]}"
+        echo "Waiting for any non-working status"
         echo "Poll interval: ${poll_interval}s"
         echo "Max polls: $max_polls"
         echo "Max consecutive API errors: $max_api_errors"
@@ -527,45 +524,43 @@ runs:
           current_status=$(echo "$response_body" | jq -r '.status_enum // empty')
           echo "  Current status_enum: $current_status"
 
-          # Check if current status matches any target status
-          for target in "${target_statuses[@]}"; do
-            if [[ "$current_status" == "$target" ]]; then
-              echo "Session reached target status: $current_status"
+          # Any non-working status means the session has stopped
+          if [[ "$current_status" != "working" && -n "$current_status" ]]; then
+            echo "Session reached non-working status: $current_status"
 
-              # Extract outputs
-              echo "::group::📥 Final Session Response"
-              echo "$response_body" | jq .
-              echo "::endgroup::"
+            # Extract outputs
+            echo "::group::📥 Final Session Response"
+            echo "$response_body" | jq .
+            echo "::endgroup::"
 
-              # Output: status
-              echo "status=$current_status" >> $GITHUB_OUTPUT
+            # Output: status
+            echo "status=$current_status" >> $GITHUB_OUTPUT
 
-              # Output: summary (last message)
-              last_message=$(echo "$response_body" | jq -r '
-                if .messages and (.messages | length) > 0 then
-                  .messages[-1].message // ""
-                else
-                  ""
-                end
-              ')
-              # Use heredoc for multi-line summary
-              echo "summary<<DEVIN_EOF" >> $GITHUB_OUTPUT
-              printf '%s' "$last_message" >> $GITHUB_OUTPUT
-              echo >> $GITHUB_OUTPUT
-              echo "DEVIN_EOF" >> $GITHUB_OUTPUT
+            # Output: summary (last message)
+            last_message=$(echo "$response_body" | jq -r '
+              if .messages and (.messages | length) > 0 then
+                .messages[-1].message // ""
+              else
+                ""
+              end
+            ')
+            # Use heredoc for multi-line summary
+            echo "summary<<DEVIN_EOF" >> $GITHUB_OUTPUT
+            printf '%s' "$last_message" >> $GITHUB_OUTPUT
+            echo >> $GITHUB_OUTPUT
+            echo "DEVIN_EOF" >> $GITHUB_OUTPUT
 
-              # Output: structured-output (preserve as JSON if it's an object, otherwise as string)
-              structured_output=$(echo "$response_body" | jq '.structured_output // empty')
-              echo "structured-output<<DEVIN_EOF" >> $GITHUB_OUTPUT
-              printf '%s' "$structured_output" >> $GITHUB_OUTPUT
-              echo >> $GITHUB_OUTPUT
-              echo "DEVIN_EOF" >> $GITHUB_OUTPUT
+            # Output: structured-output (preserve as JSON if it's an object, otherwise as string)
+            structured_output=$(echo "$response_body" | jq '.structured_output // empty')
+            echo "structured-output<<DEVIN_EOF" >> $GITHUB_OUTPUT
+            printf '%s' "$structured_output" >> $GITHUB_OUTPUT
+            echo >> $GITHUB_OUTPUT
+            echo "DEVIN_EOF" >> $GITHUB_OUTPUT
 
-              exit 0
-            fi
-          done
+            exit 0
+          fi
 
-          echo "  Not a target status yet. Sleeping ${poll_interval}s..."
+          echo "  Still working. Sleeping ${poll_interval}s..."
           sleep "$poll_interval"
         done
 

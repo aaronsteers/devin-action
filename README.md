@@ -28,7 +28,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
 | `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided. Cannot be used with `reuse-session`. | false    |          |
 | `reuse-session`| Existing Devin session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
-| `wait-for-stopped-status` | If `true`, polls until `status_enum` reaches a terminal state (`finished`, `stopped`, `blocked`, or `expired`). | false | `false` |
+| `wait-for-stopped-status` | If `true`, polls until `status_enum` is any non-`working` state. | false | `false` |
 | `wait-poll-interval` | Seconds between polls when `wait-for-stopped-status` is enabled | false | `30` |
 | `wait-max-polls` | Maximum number of polls before the step fails with a timeout error | false | `40` |
 | `wait-max-api-errors` | Maximum consecutive API errors before aborting | false | `3` |
@@ -148,7 +148,7 @@ You can provide either a session ID or a full session URL:
 
 ### Waiting for Session Completion
 
-Use `wait-for-stopped-status` to poll the Devin session until it reaches a terminal state (`finished`, `stopped`, `blocked`, or `expired`). This is useful for workflows that need the session's output before proceeding (e.g., posting a summary, gating subsequent steps).
+Use `wait-for-stopped-status` to poll the Devin session until it reaches any non-`working` state. This is useful for workflows that need the session's output before proceeding (e.g., posting a summary, gating subsequent steps).
 
 **Wait during session creation (single step):**
 
@@ -190,7 +190,7 @@ When polling completes, the following additional outputs are available:
 | `summary` | The last message from the session |
 | `structured-output` | The session's `structured_output` field (if any) |
 
-The terminal states polled for are: `finished`, `stopped`, `blocked`, `expired`.
+The action waits for any `status_enum` value other than `working`. See the [Devin API docs](https://docs.devin.ai/api-reference/v1/sessions/retrieve-details-about-an-existing-session) for the full list of possible status values.
 
 ## Context Gathering
 

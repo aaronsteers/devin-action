@@ -93,6 +93,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
       run: |
         set -euo pipefail
 
@@ -133,9 +134,12 @@ runs:
         fi
 
         # Add custom prompt text if provided
-        if [[ -n "${{ inputs.prompt-text }}" ]]; then
+        # NOTE: prompt-text is passed via INPUT_PROMPT_TEXT env var to avoid
+        # shell syntax errors when the text contains special characters
+        # (quotes, parentheses, etc.) that would break ${{ }} interpolation.
+        if [[ -n "$INPUT_PROMPT_TEXT" ]]; then
           echo "👀 Found 'prompt-text' input"
-          prompt_parts+=("${{ inputs.prompt-text }}")
+          prompt_parts+=("$INPUT_PROMPT_TEXT")
         else
           echo "👀 No 'prompt-text' input found"
         fi
@@ -193,6 +197,9 @@ runs:
     - name: Resolve session vars
       id: resolve-vars
       shell: bash
+      env:
+        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
+        INPUT_TAGS: ${{ inputs.tags }}
       run: |
         set -euo pipefail
 
@@ -200,12 +207,12 @@ runs:
         echo "::group::🔍 Input Summary"
         echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (inject message)' || echo 'CREATE NEW SESSION')"
         echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "tags: $([[ -n "${{ inputs.tags }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "tags: $([[ -n "$INPUT_TAGS" ]] && echo 'SET' || echo 'NOT SET')"
         echo "dry-run: ${{ inputs.dry-run }}"
         echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
         echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
         echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
-        echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "prompt-text: $([[ -n "$INPUT_PROMPT_TEXT" ]] && echo 'SET' || echo 'NOT SET')"
         echo "::endgroup::"
 
         # Parse reuse-session input if provided
@@ -323,6 +330,7 @@ runs:
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
+        INPUT_TAGS: ${{ inputs.tags }}
       run: |
         set -euo pipefail
 
@@ -351,7 +359,9 @@ runs:
 
         # Process additional tags input if provided (supports both CSV and line-delimited)
         additional_tags=()
-        if [[ -n "${{ inputs.tags }}" ]]; then
+        # NOTE: tags is passed via INPUT_TAGS env var to avoid shell syntax
+        # errors when multiline tag values break ${{ }} interpolation.
+        if [[ -n "$INPUT_TAGS" ]]; then
           # Handle both CSV and line-delimited formats
           # First split by newlines, then by commas for each line
           while IFS= read -r line; do
@@ -366,7 +376,7 @@ runs:
                 fi
               done
             fi
-          done <<< "${{ inputs.tags }}"
+          done <<< "$INPUT_TAGS"
         fi
 
         # Combine automatic and additional tags

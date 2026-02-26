@@ -89,6 +89,7 @@ runs:
 
     - name: Build Devin prompt
       id: build-prompt
+      if: inputs.prompt-text != '' || inputs.comment-id != '' || inputs.issue-number != '' || inputs.playbook-macro != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -245,7 +246,7 @@ runs:
 
     - name: Inject message into existing session
       id: inject-message
-      if: inputs.reuse-session != ''
+      if: inputs.reuse-session != '' && steps.build-prompt.outputs.prompt != ''
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -456,7 +457,7 @@ runs:
         set -euo pipefail
 
         # Resolve the session ID from whichever earlier step produced it
-        session_id="${{ steps.inject-message.outputs.session-id || steps.create-session.outputs.session-id }}"
+        session_id="${{ steps.inject-message.outputs.session-id || steps.create-session.outputs.session-id || steps.resolve-vars.outputs.session-id }}"
         if [[ -z "$session_id" ]]; then
           echo "::error::No session ID available for polling. Ensure a session was created or reused."
           exit 1

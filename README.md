@@ -28,6 +28,8 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
 | `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided. Cannot be used with `reuse-session`. | false    |          |
 | `reuse-session`| Existing Devin session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
+| `wait-for-stopped-status` | If `true`, polls until `status_enum` is any non-`working` state. | false | `false` |
+| `wait-minutes-max` | Maximum minutes to poll before timing out (only used when `wait-for-stopped-status` is enabled) | false | `20` |
 
 ## Session Tagging
 
@@ -141,6 +143,49 @@ You can provide either a session ID or a full session URL:
 ```
 
 **Note:** The `reuse-session` input is mutually exclusive with `tags`. When injecting a message into an existing session, tags cannot be specified since they are only applicable when creating new sessions.
+
+### Waiting for Session Completion
+
+Use `wait-for-stopped-status` to poll the Devin session until it reaches any non-`working` state. This is useful for workflows that need the session's output before proceeding (e.g., posting a summary, gating subsequent steps).
+
+**Wait during session creation (single step):**
+
+```yaml
+- uses: aaronsteers/devin-action@v1
+  id: devin
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    prompt-text: "Analyze commits and write a summary..."
+    wait-for-stopped-status: true
+```
+
+**Wait on an existing session (multi-step):**
+
+```yaml
+- uses: aaronsteers/devin-action@v1
+  id: create
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    prompt-text: "Do something..."
+
+# ... other steps ...
+
+- uses: aaronsteers/devin-action@v1
+  id: wait
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    reuse-session: ${{ steps.create.outputs.session-id }}
+    wait-for-stopped-status: true
+```
+
+When polling completes, the following additional outputs are available:
+
+| Output | Description |
+|--------|-------------|
+| `status` | The terminal `status_enum` value when polling completes |
+| `summary` | The last message from the session |
+
+The action waits for any `status_enum` value other than `working`. See the [Devin API docs](https://docs.devin.ai/api-reference/v1/sessions/retrieve-details-about-an-existing-session) for the full list of possible status values.
 
 ## Context Gathering
 

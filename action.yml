@@ -38,6 +38,14 @@ inputs:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
     default: "false"
+  wait-for-stopped-status:
+    description: "If 'true', polls GET /v1/sessions/{session_id} until status_enum is any non-working state."
+    required: false
+    default: "false"
+  wait-minutes-max:
+    description: "Maximum minutes to poll before timing out (only used when wait-for-stopped-status is enabled)"
+    required: false
+    default: "20"
 
 outputs:
   session-id:
@@ -55,6 +63,12 @@ outputs:
   run-url:
     description: "The GitHub Actions run URL"
     value: ${{ steps.vars.outputs.run-url }}
+  status:
+    description: "The terminal status_enum value when polling completes (only set when wait-for-stopped-status is enabled)"
+    value: ${{ steps.wait-for-status.outputs.status }}
+  summary:
+    description: "The last message from the session (only set when wait-for-stopped-status is enabled)"
+    value: ${{ steps.wait-for-status.outputs.summary }}
 
 runs:
   using: "composite"
@@ -75,6 +89,7 @@ runs:
 
     - name: Build Devin prompt
       id: build-prompt
+      if: inputs.prompt-text != '' || inputs.comment-id != '' || inputs.issue-number != '' || inputs.playbook-macro != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -231,7 +246,7 @@ runs:
 
     - name: Inject message into existing session
       id: inject-message
-      if: inputs.reuse-session != ''
+      if: inputs.reuse-session != '' && steps.build-prompt.outputs.prompt != ''
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -431,6 +446,123 @@ runs:
 
         echo "session-id=$session_id" >> $GITHUB_OUTPUT
         echo "session-url=$session_url" >> $GITHUB_OUTPUT
+
+    - name: Wait for session status
+      id: wait-for-status
+      if: inputs.wait-for-stopped-status == 'true' && inputs.dry-run != 'true'
+      shell: bash
+      env:
+        DEVIN_TOKEN: ${{ inputs.devin-token }}
+      run: |
+        set -euo pipefail
+
+        # Resolve the session ID from whichever earlier step produced it
+        session_id="${{ steps.inject-message.outputs.session-id || steps.create-session.outputs.session-id || steps.resolve-vars.outputs.session-id }}"
+        if [[ -z "$session_id" ]]; then
+          echo "::error::No session ID available for polling. Ensure a session was created or reused."
+          exit 1
+        fi
+
+        # Internal defaults
+        poll_interval=30
+        max_api_errors=3
+        # Derive max polls from user-configurable wait-minutes-max
+        wait_minutes="${{ inputs.wait-minutes-max }}"
+        if ! [[ "$wait_minutes" =~ ^[0-9]+$ ]] || (( wait_minutes <= 0 )); then
+          echo "::error::wait-minutes-max must be a positive integer, got '$wait_minutes'."
+          exit 1
+        fi
+        max_polls=$(( (wait_minutes * 60 + poll_interval - 1) / poll_interval ))
+        consecutive_errors=0
+        poll_count=0
+
+        echo "::group::⏳ Polling Configuration"
+        echo "Session ID: $session_id"
+        echo "Waiting for any non-working status"
+        echo "Poll interval: ${poll_interval}s"
+        echo "Max polls: $max_polls"
+        echo "Max consecutive API errors: $max_api_errors"
+        echo "::endgroup::"
+
+        while true; do
+          poll_count=$((poll_count + 1))
+          if [[ $poll_count -gt $max_polls ]]; then
+            echo "::error::Polling timed out after $max_polls polls ($((max_polls * poll_interval))s)."
+            exit 1
+          fi
+
+          echo "Poll $poll_count/$max_polls — fetching session status..."
+
+          response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X GET \
+            -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.devin.ai/v1/sessions/${session_id}" 2>&1) || true
+
+          http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d':' -f2)
+          response_body=$(echo "$response" | sed '/HTTP_STATUS:/d')
+
+          # Handle API errors
+          if [[ -z "$http_status" || "$http_status" -lt 200 || "$http_status" -ge 300 ]]; then
+            consecutive_errors=$((consecutive_errors + 1))
+            echo "::warning::API error (attempt $consecutive_errors/$max_api_errors). HTTP status: ${http_status:-unknown}"
+            if [[ $consecutive_errors -ge $max_api_errors ]]; then
+              echo "::error::Aborting after $max_api_errors consecutive API errors."
+              exit 1
+            fi
+            echo "Retrying in ${poll_interval}s..."
+            sleep "$poll_interval"
+            continue
+          fi
+
+          # Reset consecutive error counter on success
+          consecutive_errors=0
+
+          # Extract status_enum from response, treating JSON parse failures as retryable errors
+          if ! current_status=$(echo "$response_body" | jq -r '.status_enum // empty' 2>/dev/null); then
+            consecutive_errors=$((consecutive_errors + 1))
+            echo "::warning::Failed to parse JSON response (attempt $consecutive_errors/$max_api_errors)."
+            if [[ $consecutive_errors -ge $max_api_errors ]]; then
+              echo "::error::Aborting after $max_api_errors consecutive parse errors."
+              exit 1
+            fi
+            sleep "$poll_interval"
+            continue
+          fi
+          echo "  Current status_enum: $current_status"
+
+          # Any non-working status means the session has stopped
+          if [[ "$current_status" != "working" && -n "$current_status" ]]; then
+            echo "Session reached non-working status: $current_status"
+
+            # Extract outputs
+            echo "::group::📥 Final Session Response"
+            echo "$response_body" | jq .
+            echo "::endgroup::"
+
+            # Output: status
+            echo "status=$current_status" >> $GITHUB_OUTPUT
+
+            # Output: summary (last message)
+            last_message=$(echo "$response_body" | jq -r '
+              if .messages and (.messages | length) > 0 then
+                .messages[-1].message // ""
+              else
+                ""
+              end
+            ')
+            # Use heredoc with unique delimiter for multi-line summary
+            summary_delim="DEVIN_EOF_${RANDOM}_$(date +%s)"
+            echo "summary<<$summary_delim" >> $GITHUB_OUTPUT
+            printf '%s' "$last_message" >> $GITHUB_OUTPUT
+            echo >> $GITHUB_OUTPUT
+            echo "$summary_delim" >> $GITHUB_OUTPUT
+
+            exit 0
+          fi
+
+          echo "  Still working. Sleeping ${poll_interval}s..."
+          sleep "$poll_interval"
+        done
 
     - name: Append success comment
       if: steps.comment-start.outputs.comment-id && success()

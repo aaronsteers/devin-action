@@ -87,13 +87,33 @@ runs:
 
         echo "Input validation passed"
 
+    - name: Export multiline inputs to environment
+      shell: bash
+      env:
+        _PROMPT_TEXT: ${{ inputs.prompt-text }}
+        _TAGS: ${{ inputs.tags }}
+      run: |
+        # Export multiline-capable inputs to GITHUB_ENV using heredoc delimiters.
+        # This avoids shell syntax errors when these values contain special
+        # characters (quotes, parentheses, newlines, etc.) that would break
+        # direct ${{ }} interpolation in bash conditionals.
+        {
+          echo "INPUT_PROMPT_TEXT<<__DEVIN_PROMPT_EOF__"
+          printf '%s\n' "$_PROMPT_TEXT"
+          echo "__DEVIN_PROMPT_EOF__"
+        } >> "$GITHUB_ENV"
+        {
+          echo "INPUT_TAGS<<__DEVIN_TAGS_EOF__"
+          printf '%s\n' "$_TAGS"
+          echo "__DEVIN_TAGS_EOF__"
+        } >> "$GITHUB_ENV"
+
     - name: Build Devin prompt
       id: build-prompt
       if: inputs.prompt-text != '' || inputs.comment-id != '' || inputs.issue-number != '' || inputs.playbook-macro != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
       run: |
         set -euo pipefail
 
@@ -197,9 +217,6 @@ runs:
     - name: Resolve session vars
       id: resolve-vars
       shell: bash
-      env:
-        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
-        INPUT_TAGS: ${{ inputs.tags }}
       run: |
         set -euo pipefail
 
@@ -330,7 +347,6 @@ runs:
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
-        INPUT_TAGS: ${{ inputs.tags }}
       run: |
         set -euo pipefail
 

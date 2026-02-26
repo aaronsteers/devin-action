@@ -466,7 +466,11 @@ runs:
         poll_interval=30
         max_api_errors=3
         # Derive max polls from user-configurable wait-minutes-max
-        wait_minutes=${{ inputs.wait-minutes-max }}
+        wait_minutes="${{ inputs.wait-minutes-max }}"
+        if ! [[ "$wait_minutes" =~ ^[0-9]+$ ]] || (( wait_minutes <= 0 )); then
+          echo "::error::wait-minutes-max must be a positive integer, got '$wait_minutes'."
+          exit 1
+        fi
         max_polls=$(( (wait_minutes * 60 + poll_interval - 1) / poll_interval ))
         consecutive_errors=0
         poll_count=0
@@ -512,8 +516,17 @@ runs:
           # Reset consecutive error counter on success
           consecutive_errors=0
 
-          # Extract status_enum from response
-          current_status=$(echo "$response_body" | jq -r '.status_enum // empty')
+          # Extract status_enum from response, treating JSON parse failures as retryable errors
+          if ! current_status=$(echo "$response_body" | jq -r '.status_enum // empty' 2>/dev/null); then
+            consecutive_errors=$((consecutive_errors + 1))
+            echo "::warning::Failed to parse JSON response (attempt $consecutive_errors/$max_api_errors)."
+            if [[ $consecutive_errors -ge $max_api_errors ]]; then
+              echo "::error::Aborting after $max_api_errors consecutive parse errors."
+              exit 1
+            fi
+            sleep "$poll_interval"
+            continue
+          fi
           echo "  Current status_enum: $current_status"
 
           # Any non-working status means the session has stopped
@@ -536,11 +549,12 @@ runs:
                 ""
               end
             ')
-            # Use heredoc for multi-line summary
-            echo "summary<<DEVIN_EOF" >> $GITHUB_OUTPUT
+            # Use heredoc with unique delimiter for multi-line summary
+            summary_delim="DEVIN_EOF_${RANDOM}_$(date +%s)"
+            echo "summary<<$summary_delim" >> $GITHUB_OUTPUT
             printf '%s' "$last_message" >> $GITHUB_OUTPUT
             echo >> $GITHUB_OUTPUT
-            echo "DEVIN_EOF" >> $GITHUB_OUTPUT
+            echo "$summary_delim" >> $GITHUB_OUTPUT
 
             exit 0
           fi

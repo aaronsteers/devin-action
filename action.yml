@@ -42,18 +42,6 @@ inputs:
     description: "If 'true', polls GET /v1/sessions/{session_id} until status_enum is any non-working state."
     required: false
     default: "false"
-  wait-poll-interval:
-    description: "Seconds between polls when wait-for-stopped-status is enabled"
-    required: false
-    default: "30"
-  wait-max-polls:
-    description: "Maximum number of polls before the step fails with a timeout error"
-    required: false
-    default: "40"
-  wait-max-api-errors:
-    description: "Maximum consecutive API errors before aborting"
-    required: false
-    default: "3"
 
 outputs:
   session-id:
@@ -473,9 +461,10 @@ runs:
           exit 1
         fi
 
-        poll_interval=${{ inputs.wait-poll-interval }}
-        max_polls=${{ inputs.wait-max-polls }}
-        max_api_errors=${{ inputs.wait-max-api-errors }}
+        # Internal defaults (not user-configurable)
+        poll_interval=30
+        max_polls=40
+        max_api_errors=3
         consecutive_errors=0
         poll_count=0
 

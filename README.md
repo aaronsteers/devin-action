@@ -29,9 +29,6 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided. Cannot be used with `reuse-session`. | false    |          |
 | `reuse-session`| Existing Devin session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
 | `wait-for-stopped-status` | If `true`, polls until `status_enum` is any non-`working` state. | false | `false` |
-| `wait-poll-interval` | Seconds between polls when `wait-for-stopped-status` is enabled | false | `30` |
-| `wait-max-polls` | Maximum number of polls before the step fails with a timeout error | false | `40` |
-| `wait-max-api-errors` | Maximum consecutive API errors before aborting | false | `3` |
 
 ## Session Tagging
 
@@ -159,8 +156,6 @@ Use `wait-for-stopped-status` to poll the Devin session until it reaches any non
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
     prompt-text: "Analyze commits and write a summary..."
     wait-for-stopped-status: true
-    wait-poll-interval: 30      # seconds between polls (default: 30)
-    wait-max-polls: 60          # max polls before timeout (default: 40)
 ```
 
 **Wait on an existing session (multi-step):**

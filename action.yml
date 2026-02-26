@@ -42,6 +42,10 @@ inputs:
     description: "If 'true', polls GET /v1/sessions/{session_id} until status_enum is any non-working state."
     required: false
     default: "false"
+  wait-minutes-max:
+    description: "Maximum minutes to poll before timing out (only used when wait-for-stopped-status is enabled)"
+    required: false
+    default: "20"
 
 outputs:
   session-id:
@@ -461,10 +465,12 @@ runs:
           exit 1
         fi
 
-        # Internal defaults (not user-configurable)
+        # Internal defaults
         poll_interval=30
-        max_polls=40
         max_api_errors=3
+        # Derive max polls from user-configurable wait-minutes-max
+        wait_minutes=${{ inputs.wait-minutes-max }}
+        max_polls=$(( (wait_minutes * 60 + poll_interval - 1) / poll_interval ))
         consecutive_errors=0
         poll_count=0
 

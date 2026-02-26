@@ -184,7 +184,6 @@ When polling completes, the following additional outputs are available:
 |--------|-------------|
 | `status` | The terminal `status_enum` value when polling completes |
 | `summary` | The last message from the session |
-| `structured-output` | The session's `structured_output` field (if any) |
 
 The action waits for any `status_enum` value other than `working`. See the [Devin API docs](https://docs.devin.ai/api-reference/v1/sessions/retrieve-details-about-an-existing-session) for the full list of possible status values.
 

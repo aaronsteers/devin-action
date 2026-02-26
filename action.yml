@@ -69,9 +69,6 @@ outputs:
   summary:
     description: "The last message from the session (only set when wait-for-stopped-status is enabled)"
     value: ${{ steps.wait-for-status.outputs.summary }}
-  structured-output:
-    description: "The session's structured_output field, if any (only set when wait-for-stopped-status is enabled)"
-    value: ${{ steps.wait-for-status.outputs.structured-output }}
 
 runs:
   using: "composite"
@@ -542,13 +539,6 @@ runs:
             # Use heredoc for multi-line summary
             echo "summary<<DEVIN_EOF" >> $GITHUB_OUTPUT
             printf '%s' "$last_message" >> $GITHUB_OUTPUT
-            echo >> $GITHUB_OUTPUT
-            echo "DEVIN_EOF" >> $GITHUB_OUTPUT
-
-            # Output: structured-output (preserve as JSON if it's an object, otherwise as string)
-            structured_output=$(echo "$response_body" | jq '.structured_output // empty')
-            echo "structured-output<<DEVIN_EOF" >> $GITHUB_OUTPUT
-            printf '%s' "$structured_output" >> $GITHUB_OUTPUT
             echo >> $GITHUB_OUTPUT
             echo "DEVIN_EOF" >> $GITHUB_OUTPUT
 

@@ -16,7 +16,10 @@ inputs:
     description: "Playbook macro (optional, for structured workflows) - should start with '!' (e.g., !my_playbook)"
     required: false
   prompt-text:
-    description: "Additional prompt text (optional)"
+    description: "Additional prompt text (optional). Mutually exclusive with prompt-file."
+    required: false
+  prompt-file:
+    description: "Path to a file containing the prompt text (optional, relative to the repository root). Use this instead of prompt-text to avoid YAML quoting/escaping issues with multi-line prompts. Mutually exclusive with prompt-text."
     required: false
   devin-token:
     description: |
@@ -109,6 +112,20 @@ runs:
         if [[ -n "${{ inputs.reuse-session }}" && -n "${{ inputs.tags }}" ]]; then
           echo "::error::The 'reuse-session' and 'tags' inputs are mutually exclusive. When injecting a message into an existing session, tags cannot be specified."
           exit 1
+        fi
+
+        # Check mutual exclusivity: prompt-text and prompt-file
+        if [[ -n "${{ inputs.prompt-text }}" && -n "${{ inputs.prompt-file }}" ]]; then
+          echo "::error::The 'prompt-text' and 'prompt-file' inputs are mutually exclusive. Use one or the other, not both."
+          exit 1
+        fi
+
+        # Validate prompt-file exists if provided
+        if [[ -n "${{ inputs.prompt-file }}" ]]; then
+          if [[ ! -f "${{ inputs.prompt-file }}" ]]; then
+            echo "::error::The prompt-file '${{ inputs.prompt-file }}' does not exist."
+            exit 1
+          fi
         fi
 
         # Validate api-version input
@@ -222,7 +239,7 @@ runs:
 
     - name: Build Devin prompt
       id: build-prompt
-      if: inputs.prompt-text != '' || inputs.comment-id != '' || inputs.issue-number != '' || inputs.playbook-macro != ''
+      if: inputs.prompt-text != '' || inputs.prompt-file != '' || inputs.comment-id != '' || inputs.issue-number != '' || inputs.playbook-macro != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -265,12 +282,21 @@ runs:
           prompt_parts+=("Please use playbook macro: ${{ inputs.playbook-macro }}")
         fi
 
+        # Add prompt from file if prompt-file is provided
+        if [[ -n "${{ inputs.prompt-file }}" ]]; then
+          echo "👀 Found 'prompt-file' input: ${{ inputs.prompt-file }}"
+          file_content=$(cat "${{ inputs.prompt-file }}")
+          if [[ -z "$file_content" ]]; then
+            echo "::error::The prompt-file '${{ inputs.prompt-file }}' is empty."
+            exit 1
+          fi
+          prompt_parts+=("$file_content")
         # Add custom prompt text if provided
-        if [[ -n "${{ inputs.prompt-text }}" ]]; then
+        elif [[ -n "${{ inputs.prompt-text }}" ]]; then
           echo "👀 Found 'prompt-text' input"
           prompt_parts+=("${{ inputs.prompt-text }}")
         else
-          echo "👀 No 'prompt-text' input found"
+          echo "👀 No 'prompt-text' or 'prompt-file' input found"
         fi
 
         echo "👀 Combining all ${#prompt_parts[@]} prompt parts"
@@ -339,6 +365,7 @@ runs:
         echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
         echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
         echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "prompt-file: $([[ -n "${{ inputs.prompt-file }}" ]] && echo 'SET (${{ inputs.prompt-file }})' || echo 'NOT SET')"
         echo "advanced-mode: $([[ -n "${{ inputs.advanced-mode }}" ]] && echo 'SET (${{ inputs.advanced-mode }})' || echo 'NOT SET')"
         echo "session-links: $([[ -n "${{ inputs.session-links }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "org-id: $([[ -n "${{ inputs.org-id }}" ]] && echo 'SET' || echo 'NOT SET')"

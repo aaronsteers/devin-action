@@ -19,7 +19,10 @@ inputs:
     description: "Additional prompt text (optional)"
     required: false
   devin-token:
-    description: "Devin API Token (required for authentication)"
+    description: |
+      Devin API Token (required for authentication).
+      For v1 API: Personal API Key (apk_user_*) or Service API Key (apk_*).
+      For v3 API: Service User credential with ManageOrgSessions permission (service users only; PATs are not supported for v3).
     required: true
   github-token:
     description: "GitHub Token (required for posting comments and accessing repo context)"
@@ -62,6 +65,13 @@ inputs:
   max-acu-limit:
     description: "Maximum ACU limit for the session (optional, v3 API only). Caps the compute budget for the session."
     required: false
+  child-playbook-id:
+    description: "Playbook ID for child sessions (v3 API only). Required when advanced-mode is 'batch' or 'improve'."
+    required: false
+  bypass-approval:
+    description: "If 'true', bypass the approval step for batch session creation (v3 API only, batch mode). Requires UseDevinExpert permission."
+    required: false
+    default: "false"
 
 outputs:
   session-id:
@@ -117,6 +127,8 @@ runs:
         session_links="${{ inputs.session-links }}"
         org_id="${{ inputs.org-id }}"
         max_acu_limit="${{ inputs.max-acu-limit }}"
+        child_playbook_id="${{ inputs.child-playbook-id }}"
+        bypass_approval="${{ inputs.bypass-approval }}"
 
         # Determine effective advanced mode (session-links implies analyze)
         if [[ -z "$advanced_mode" && -n "$session_links" ]]; then
@@ -134,6 +146,12 @@ runs:
         fi
         if [[ -n "$max_acu_limit" ]]; then
           v3_only_features+=("max-acu-limit")
+        fi
+        if [[ -n "$child_playbook_id" ]]; then
+          v3_only_features+=("child-playbook-id")
+        fi
+        if [[ "$bypass_approval" == "true" ]]; then
+          v3_only_features+=("bypass-approval")
         fi
 
         # Error if v1 is explicitly requested with v3-only features
@@ -177,6 +195,20 @@ runs:
         # analyze mode requires session-links
         if [[ "$advanced_mode" == "analyze" && -z "$session_links" ]]; then
           echo "::error::The 'session-links' input is required when advanced-mode is 'analyze'."
+          exit 1
+        fi
+
+        # batch and improve modes require child-playbook-id
+        if [[ "$advanced_mode" == "batch" || "$advanced_mode" == "improve" ]]; then
+          if [[ -z "$child_playbook_id" ]]; then
+            echo "::error::The 'child-playbook-id' input is required when advanced-mode is '$advanced_mode'."
+            exit 1
+          fi
+        fi
+
+        # bypass-approval only applies to batch mode
+        if [[ "$bypass_approval" == "true" && "$advanced_mode" != "batch" ]]; then
+          echo "::error::The 'bypass-approval' input is only valid when advanced-mode is 'batch'."
           exit 1
         fi
 
@@ -311,6 +343,8 @@ runs:
         echo "session-links: $([[ -n "${{ inputs.session-links }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "org-id: $([[ -n "${{ inputs.org-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "max-acu-limit: $([[ -n "${{ inputs.max-acu-limit }}" ]] && echo 'SET (${{ inputs.max-acu-limit }})' || echo 'NOT SET')"
+        echo "child-playbook-id: $([[ -n "${{ inputs.child-playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "bypass-approval: ${{ inputs.bypass-approval }}"
         echo "api-version: ${{ inputs.api-version }}"
         echo "::endgroup::"
 
@@ -438,6 +472,8 @@ runs:
         session_links_input="${{ inputs.session-links }}"
         org_id="${{ inputs.org-id }}"
         max_acu_limit="${{ inputs.max-acu-limit }}"
+        child_playbook_id="${{ inputs.child-playbook-id }}"
+        bypass_approval="${{ inputs.bypass-approval }}"
 
         # session-links without advanced-mode defaults to analyze
         if [[ -z "$advanced_mode" && -n "$session_links_input" ]]; then
@@ -446,7 +482,7 @@ runs:
 
         # Determine effective API version
         if [[ "$api_version" == "auto" ]]; then
-          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" ]]; then
+          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$child_playbook_id" || "$bypass_approval" == "true" ]]; then
             use_v3="true"
           else
             use_v3="false"
@@ -543,13 +579,17 @@ runs:
             --argjson tags "$tags_array" \
             --argjson session_links "$session_links_json" \
             --arg max_acu "$max_acu_limit" \
+            --arg child_playbook "$child_playbook_id" \
+            --arg bypass "$bypass_approval" \
             '{
               "prompt": $prompt,
               "advanced_mode": $advanced_mode,
               "tags": $tags
             }
             | if $session_links != null then . + {"session_links": $session_links} else . end
-            | if $max_acu != "" then . + {"max_acu_limit": ($max_acu | tonumber)} else . end' > devin_request.json
+            | if $max_acu != "" then . + {"max_acu_limit": ($max_acu | tonumber)} else . end
+            | if $child_playbook != "" then . + {"child_playbook_id": $child_playbook} else . end
+            | if $bypass == "true" then . + {"bypass_approval": true} else . end' > devin_request.json
 
         else
           # ===== V1 API payload =====

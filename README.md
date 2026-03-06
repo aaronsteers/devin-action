@@ -35,6 +35,8 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `session-links` | Session URLs or IDs to analyze (CSV or line-delimited). Required for `analyze` mode. When provided without `advanced-mode`, defaults to `analyze`. | false | |
 | `org-id` | Devin organization ID. Required when using v3 API features (`advanced-mode` or `session-links`). | false | |
 | `max-acu-limit` | Maximum ACU limit for the session (v3 API only). | false | |
+| `child-playbook-id` | Playbook ID for child sessions (v3 API only). Required for `batch` and `improve` modes. | false | |
+| `bypass-approval` | If `true`, bypass approval for batch session creation (v3 batch mode only). Requires `UseDevinExpert` permission. | false | `false` |
 
 ## Session Tagging
 
@@ -220,8 +222,9 @@ When `advanced-mode` or `session-links` is provided, the action automatically us
 
 The v3 API requires:
 
-1. **A v3-compatible API token** (service user credential with `ManageOrgSessions` and `UseDevinExpert` permissions)
+1. **A v3-compatible API token** — must be a service user credential (not a PAT). Requires `ManageOrgSessions` permission. Advanced mode additionally requires `UseDevinExpert`.
 2. **Organization ID** via the `org-id` input
+3. **Team or Enterprise plan** — the v3 API and Advanced Mode are available on Team and Enterprise plans.
 
 ### Analyze Sessions Example
 

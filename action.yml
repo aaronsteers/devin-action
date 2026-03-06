@@ -46,6 +46,18 @@ inputs:
     description: "Maximum minutes to poll before timing out (only used when wait-for-stopped-status is enabled)"
     required: false
     default: "20"
+  advanced-mode:
+    description: "V3 API advanced mode (optional). Enables specialized session behaviors for automation workflows. Options: 'analyze' (analyze existing sessions via session-links), 'create' (create a new playbook), 'improve' (improve an existing playbook), 'batch' (start multiple sessions), 'manage' (manage knowledge). When set, uses the v3 API endpoint. Requires org-id."
+    required: false
+  session-links:
+    description: "Session URLs or IDs to provide as context (optional, supports CSV or line-delimited format). Required when advanced-mode is 'analyze'. When provided without advanced-mode, defaults to 'analyze' mode automatically."
+    required: false
+  org-id:
+    description: "Devin organization ID (required when using v3 API features such as advanced-mode or session-links). For org-scoped service users this may be auto-resolved, but providing it explicitly is recommended."
+    required: false
+  max-acu-limit:
+    description: "Maximum ACU limit for the session (optional, v3 API only). Caps the compute budget for the session."
+    required: false
 
 outputs:
   session-id:
@@ -82,6 +94,48 @@ runs:
         # Check mutual exclusivity: reuse-session cannot be used with tags
         if [[ -n "${{ inputs.reuse-session }}" && -n "${{ inputs.tags }}" ]]; then
           echo "::error::The 'reuse-session' and 'tags' inputs are mutually exclusive. When injecting a message into an existing session, tags cannot be specified."
+          exit 1
+        fi
+
+        # Validate v3 API inputs
+        advanced_mode="${{ inputs.advanced-mode }}"
+        session_links="${{ inputs.session-links }}"
+        org_id="${{ inputs.org-id }}"
+
+        # Determine effective advanced mode (session-links implies analyze)
+        if [[ -z "$advanced_mode" && -n "$session_links" ]]; then
+          advanced_mode="analyze"
+          echo "::notice::session-links provided without advanced-mode; defaulting to 'analyze' mode."
+        fi
+
+        # If advanced-mode is set, org-id is required
+        if [[ -n "$advanced_mode" && -z "$org_id" ]]; then
+          echo "::error::The 'org-id' input is required when using v3 API features (advanced-mode or session-links)."
+          exit 1
+        fi
+
+        # Validate advanced-mode value
+        if [[ -n "$advanced_mode" ]]; then
+          case "$advanced_mode" in
+            analyze|create|improve|batch|manage)
+              echo "Advanced mode: $advanced_mode"
+              ;;
+            *)
+              echo "::error::Invalid advanced-mode '$advanced_mode'. Must be one of: analyze, create, improve, batch, manage."
+              exit 1
+              ;;
+          esac
+        fi
+
+        # analyze mode requires session-links
+        if [[ "$advanced_mode" == "analyze" && -z "$session_links" ]]; then
+          echo "::error::The 'session-links' input is required when advanced-mode is 'analyze'."
+          exit 1
+        fi
+
+        # v3 features are incompatible with reuse-session
+        if [[ -n "$advanced_mode" && -n "${{ inputs.reuse-session }}" ]]; then
+          echo "::error::The 'advanced-mode' and 'reuse-session' inputs are mutually exclusive. Advanced mode creates a new v3 session."
           exit 1
         fi
 
@@ -206,6 +260,10 @@ runs:
         echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
         echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
         echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "advanced-mode: $([[ -n "${{ inputs.advanced-mode }}" ]] && echo 'SET (${{ inputs.advanced-mode }})' || echo 'NOT SET')"
+        echo "session-links: $([[ -n "${{ inputs.session-links }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "org-id: $([[ -n "${{ inputs.org-id }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "max-acu-limit: $([[ -n "${{ inputs.max-acu-limit }}" ]] && echo 'SET (${{ inputs.max-acu-limit }})' || echo 'NOT SET')"
         echo "::endgroup::"
 
         # Parse reuse-session input if provided
@@ -326,8 +384,33 @@ runs:
       run: |
         set -euo pipefail
 
-        echo "::group::🆕 New Session Configuration"
-        echo "API endpoint: POST /v1/sessions"
+        # Determine API version: use v3 when advanced-mode or session-links are provided
+        advanced_mode="${{ inputs.advanced-mode }}"
+        session_links_input="${{ inputs.session-links }}"
+        org_id="${{ inputs.org-id }}"
+        max_acu_limit="${{ inputs.max-acu-limit }}"
+
+        # session-links without advanced-mode defaults to analyze
+        if [[ -z "$advanced_mode" && -n "$session_links_input" ]]; then
+          advanced_mode="analyze"
+        fi
+
+        use_v3="false"
+        if [[ -n "$advanced_mode" ]]; then
+          use_v3="true"
+        fi
+
+        if [[ "$use_v3" == "true" ]]; then
+          api_endpoint="https://api.devin.ai/v3/organizations/${org_id}/sessions"
+          echo "::group::🆕 New Session Configuration (v3 API)"
+          echo "API endpoint: POST /v3/organizations/{org_id}/sessions"
+          echo "Advanced mode: $advanced_mode"
+          echo "Organization ID: $org_id"
+        else
+          api_endpoint="https://api.devin.ai/v1/sessions"
+          echo "::group::🆕 New Session Configuration (v1 API)"
+          echo "API endpoint: POST /v1/sessions"
+        fi
         echo "Repository: ${{ github.repository }}"
         echo "Branch: ${{ github.ref_name }}"
         echo "::endgroup::"
@@ -375,34 +458,74 @@ runs:
         # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
 
-        # Build metadata object with optional fields
-        metadata_json=$(jq -n \
-          --arg run_id "${{ github.run_id }}" \
-          --arg repository "${{ github.repository }}" \
-          --arg comment_id "${{ inputs.comment-id }}" \
-          --arg issue_number "${{ inputs.issue-number }}" \
-          '{
-            "github_run_id": $run_id,
-            "github_repository": $repository,
-            "triggered_by": "github_action"
-          }
-          | if $comment_id != "" then . + {"github_comment_id": $comment_id, "github_comment_url": "https://github.com/\($repository)/issues/comments/\($comment_id)"} else . end
-          | if $issue_number != "" then . + {"github_issue_number": $issue_number, "github_issue_url": "https://github.com/\($repository)/issues/\($issue_number)"} else . end')
+        if [[ "$use_v3" == "true" ]]; then
+          # ===== V3 API payload =====
 
-        # Prepare the API request payload using jq to properly escape JSON
-        jq -n \
-          --arg prompt "$decoded_prompt" \
-          --arg repo_url "https://github.com/${{ github.repository }}" \
-          --arg branch "${{ github.ref_name }}" \
-          --argjson tags "$tags_array" \
-          --argjson metadata "$metadata_json" \
-          '{
-            "prompt": $prompt,
-            "repository_url": $repo_url,
-            "branch": $branch,
-            "tags": $tags,
-            "metadata": $metadata
-          }' > devin_request.json
+          # Parse session-links (supports CSV and line-delimited)
+          session_links_json="null"
+          if [[ -n "$session_links_input" ]]; then
+            session_links_arr=()
+            while IFS= read -r line; do
+              if [[ -n "$line" ]]; then
+                IFS=',' read -ra link_array <<< "$line"
+                for link in "${link_array[@]}"; do
+                  trimmed_link=$(echo "$link" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                  if [[ -n "$trimmed_link" ]]; then
+                    session_links_arr+=("$trimmed_link")
+                  fi
+                done
+              fi
+            done <<< "$session_links_input"
+            session_links_json=$(printf '%s\n' "${session_links_arr[@]}" | jq -R . | jq -s .)
+          fi
+
+          # Build v3 request payload
+          jq -n \
+            --arg prompt "$decoded_prompt" \
+            --arg advanced_mode "$advanced_mode" \
+            --argjson tags "$tags_array" \
+            --argjson session_links "$session_links_json" \
+            --arg max_acu "$max_acu_limit" \
+            '{
+              "prompt": $prompt,
+              "advanced_mode": $advanced_mode,
+              "tags": $tags
+            }
+            | if $session_links != null then . + {"session_links": $session_links} else . end
+            | if $max_acu != "" then . + {"max_acu_limit": ($max_acu | tonumber)} else . end' > devin_request.json
+
+        else
+          # ===== V1 API payload =====
+
+          # Build metadata object with optional fields
+          metadata_json=$(jq -n \
+            --arg run_id "${{ github.run_id }}" \
+            --arg repository "${{ github.repository }}" \
+            --arg comment_id "${{ inputs.comment-id }}" \
+            --arg issue_number "${{ inputs.issue-number }}" \
+            '{
+              "github_run_id": $run_id,
+              "github_repository": $repository,
+              "triggered_by": "github_action"
+            }
+            | if $comment_id != "" then . + {"github_comment_id": $comment_id, "github_comment_url": "https://github.com/\($repository)/issues/comments/\($comment_id)"} else . end
+            | if $issue_number != "" then . + {"github_issue_number": $issue_number, "github_issue_url": "https://github.com/\($repository)/issues/\($issue_number)"} else . end')
+
+          # Prepare the v1 API request payload
+          jq -n \
+            --arg prompt "$decoded_prompt" \
+            --arg repo_url "https://github.com/${{ github.repository }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --argjson tags "$tags_array" \
+            --argjson metadata "$metadata_json" \
+            '{
+              "prompt": $prompt,
+              "repository_url": $repo_url,
+              "branch": $branch,
+              "tags": $tags,
+              "metadata": $metadata
+            }' > devin_request.json
+        fi
 
         echo "::group::📤 Devin API Request"
         cat devin_request.json | jq
@@ -418,7 +541,7 @@ runs:
           -H "Authorization: Bearer ${DEVIN_TOKEN}" \
           -H "Content-Type: application/json" \
           -d @devin_request.json \
-          "https://api.devin.ai/v1/sessions" || echo "API_CALL_FAILED")
+          "$api_endpoint" || echo "API_CALL_FAILED")
 
         if [[ "$response" == "API_CALL_FAILED" ]]; then
           echo "Failed to call Devin API"
@@ -429,7 +552,7 @@ runs:
         echo "$response" | jq
         echo "::endgroup::"
 
-        # Extract session information
+        # Extract session information (v1 uses session_url, v3 uses url)
         session_id=$(echo "$response" | jq -r '.session_id // .id // empty')
         session_url=$(echo "$response" | jq -r '.session_url // .url // empty')
 

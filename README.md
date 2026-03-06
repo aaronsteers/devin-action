@@ -30,6 +30,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `reuse-session`| Existing Devin session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
 | `wait-for-stopped-status` | If `true`, polls until `status_enum` is any non-`working` state. | false | `false` |
 | `wait-minutes-max` | Maximum minutes to poll before timing out (only used when `wait-for-stopped-status` is enabled) | false | `20` |
+| `api-version` | Devin API version: `auto` (default), `v1`, or `v3`. When `auto`, resolves to v3 if v3-only features are used; otherwise v1. Setting `v1` with v3-only features errors. | false | `auto` |
 | `advanced-mode` | V3 API advanced mode. Options: `analyze`, `create`, `improve`, `batch`, `manage`. Requires `org-id`. See [Advanced Mode](#advanced-mode-v3-api) below. | false | |
 | `session-links` | Session URLs or IDs to analyze (CSV or line-delimited). Required for `analyze` mode. When provided without `advanced-mode`, defaults to `analyze`. | false | |
 | `org-id` | Devin organization ID. Required when using v3 API features (`advanced-mode` or `session-links`). | false | |
@@ -193,7 +194,17 @@ The action waits for any `status_enum` value other than `working`. See the [Devi
 
 ## Advanced Mode (v3 API)
 
-The action supports the Devin v3 API's advanced mode, which enables specialized session behaviors for automation workflows. When `advanced-mode` or `session-links` is provided, the action automatically uses the v3 API endpoint.
+The action supports the Devin v3 API's advanced mode, which enables specialized session behaviors for automation workflows.
+
+### API Version Selection
+
+The `api-version` input controls which Devin API endpoint is used:
+
+- **`auto`** (default): Automatically selects v3 when v3-only features (`advanced-mode`, `session-links`, `max-acu-limit`) are provided; otherwise uses v1.
+- **`v1`**: Forces the v1 API. Will error if any v3-only features are also provided.
+- **`v3`**: Forces the v3 API. Requires `org-id`.
+
+When `advanced-mode` or `session-links` is provided, the action automatically uses the v3 API endpoint (equivalent to `api-version: auto` behavior).
 
 ### Available Modes
 

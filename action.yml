@@ -46,6 +46,10 @@ inputs:
     description: "Maximum minutes to poll before timing out (only used when wait-for-stopped-status is enabled)"
     required: false
     default: "20"
+  api-version:
+    description: "Devin API version to use. Options: 'auto' (default, selects v1 or v3 based on inputs), 'v1' (force v1 API), 'v3' (force v3 API). When 'auto', v3 is used if advanced-mode or session-links is provided; otherwise v1. Setting 'v1' with v3-only features (advanced-mode, session-links, max-acu-limit) will produce an error."
+    required: false
+    default: "auto"
   advanced-mode:
     description: "V3 API advanced mode (optional). Enables specialized session behaviors for automation workflows. Options: 'analyze' (analyze existing sessions via session-links), 'create' (create a new playbook), 'improve' (improve an existing playbook), 'batch' (start multiple sessions), 'manage' (manage knowledge). When set, uses the v3 API endpoint. Requires org-id."
     required: false
@@ -97,10 +101,22 @@ runs:
           exit 1
         fi
 
+        # Validate api-version input
+        api_version="${{ inputs.api-version }}"
+        case "$api_version" in
+          auto|v1|v3)
+            ;;
+          *)
+            echo "::error::Invalid api-version '$api_version'. Must be one of: auto, v1, v3."
+            exit 1
+            ;;
+        esac
+
         # Validate v3 API inputs
         advanced_mode="${{ inputs.advanced-mode }}"
         session_links="${{ inputs.session-links }}"
         org_id="${{ inputs.org-id }}"
+        max_acu_limit="${{ inputs.max-acu-limit }}"
 
         # Determine effective advanced mode (session-links implies analyze)
         if [[ -z "$advanced_mode" && -n "$session_links" ]]; then
@@ -108,9 +124,40 @@ runs:
           echo "::notice::session-links provided without advanced-mode; defaulting to 'analyze' mode."
         fi
 
-        # If advanced-mode is set, org-id is required
-        if [[ -n "$advanced_mode" && -z "$org_id" ]]; then
-          echo "::error::The 'org-id' input is required when using v3 API features (advanced-mode or session-links)."
+        # Collect v3-only features for validation
+        v3_only_features=()
+        if [[ -n "$advanced_mode" ]]; then
+          v3_only_features+=("advanced-mode")
+        fi
+        if [[ -n "$session_links" ]]; then
+          v3_only_features+=("session-links")
+        fi
+        if [[ -n "$max_acu_limit" ]]; then
+          v3_only_features+=("max-acu-limit")
+        fi
+
+        # Error if v1 is explicitly requested with v3-only features
+        if [[ "$api_version" == "v1" && ${#v3_only_features[@]} -gt 0 ]]; then
+          features_list=$(IFS=', '; echo "${v3_only_features[*]}")
+          echo "::error::api-version is 'v1' but the following v3-only features were provided: ${features_list}. Either remove these inputs or set api-version to 'v3' or 'auto'."
+          exit 1
+        fi
+
+        # Resolve effective API version
+        if [[ "$api_version" == "auto" ]]; then
+          if [[ ${#v3_only_features[@]} -gt 0 ]]; then
+            effective_api_version="v3"
+            echo "::notice::api-version is 'auto'; resolved to 'v3' because v3 features are in use (${v3_only_features[*]})."
+          else
+            effective_api_version="v1"
+          fi
+        else
+          effective_api_version="$api_version"
+        fi
+
+        # If effective version is v3, org-id is required
+        if [[ "$effective_api_version" == "v3" && -z "$org_id" ]]; then
+          echo "::error::The 'org-id' input is required when using the v3 API (either explicitly or auto-resolved from v3-only features)."
           exit 1
         fi
 
@@ -134,12 +181,12 @@ runs:
         fi
 
         # v3 features are incompatible with reuse-session
-        if [[ -n "$advanced_mode" && -n "${{ inputs.reuse-session }}" ]]; then
-          echo "::error::The 'advanced-mode' and 'reuse-session' inputs are mutually exclusive. Advanced mode creates a new v3 session."
+        if [[ "$effective_api_version" == "v3" && -n "${{ inputs.reuse-session }}" ]]; then
+          echo "::error::The v3 API features and 'reuse-session' are mutually exclusive. The v3 API creates a new session."
           exit 1
         fi
 
-        echo "Input validation passed"
+        echo "Input validation passed (effective API version: $effective_api_version)"
 
     - name: Build Devin prompt
       id: build-prompt
@@ -264,6 +311,7 @@ runs:
         echo "session-links: $([[ -n "${{ inputs.session-links }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "org-id: $([[ -n "${{ inputs.org-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "max-acu-limit: $([[ -n "${{ inputs.max-acu-limit }}" ]] && echo 'SET (${{ inputs.max-acu-limit }})' || echo 'NOT SET')"
+        echo "api-version: ${{ inputs.api-version }}"
         echo "::endgroup::"
 
         # Parse reuse-session input if provided
@@ -384,7 +432,8 @@ runs:
       run: |
         set -euo pipefail
 
-        # Determine API version: use v3 when advanced-mode or session-links are provided
+        # Resolve API version (mirrors validation logic)
+        api_version="${{ inputs.api-version }}"
         advanced_mode="${{ inputs.advanced-mode }}"
         session_links_input="${{ inputs.session-links }}"
         org_id="${{ inputs.org-id }}"
@@ -395,9 +444,17 @@ runs:
           advanced_mode="analyze"
         fi
 
-        use_v3="false"
-        if [[ -n "$advanced_mode" ]]; then
+        # Determine effective API version
+        if [[ "$api_version" == "auto" ]]; then
+          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" ]]; then
+            use_v3="true"
+          else
+            use_v3="false"
+          fi
+        elif [[ "$api_version" == "v3" ]]; then
           use_v3="true"
+        else
+          use_v3="false"
         fi
 
         if [[ "$use_v3" == "true" ]]; then

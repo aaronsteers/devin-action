@@ -532,34 +532,6 @@ runs:
         if [[ "$use_v3" == "true" ]]; then
           api_endpoint="https://api.devin.ai/v3/organizations/${org_id}/sessions"
 
-          # Resolve playbook-macro to playbook_id if needed
-          if [[ -z "$playbook_id" && -n "${{ inputs.playbook-macro }}" ]]; then
-            macro_input="${{ inputs.playbook-macro }}"
-            # Normalize: ensure macro starts with "!"
-            if [[ "$macro_input" != !* ]]; then
-              macro_input="!${macro_input}"
-            fi
-            echo "Resolving playbook macro '$macro_input' to playbook ID..."
-            playbooks_response=$(curl -s -w "\n%{http_code}" \
-              -H "Authorization: Bearer ${{ inputs.devin-token }}" \
-              "https://api.devin.ai/v1/playbooks")
-            playbooks_http_code=$(echo "$playbooks_response" | tail -1)
-            playbooks_body=$(echo "$playbooks_response" | sed '$d')
-
-            if [[ "$playbooks_http_code" != "200" ]]; then
-              echo "::error::Failed to list playbooks (HTTP $playbooks_http_code). Cannot resolve macro '$macro_input'."
-              exit 1
-            fi
-
-            playbook_id=$(echo "$playbooks_body" | jq -r --arg macro "$macro_input" '.[] | select(.macro == $macro) | .playbook_id' | head -1)
-            if [[ -z "$playbook_id" ]]; then
-              echo "::error::No playbook found with macro '$macro_input'. Available macros:"
-              echo "$playbooks_body" | jq -r '.[].macro // empty'
-              exit 1
-            fi
-            echo "Resolved macro '$macro_input' -> playbook_id '$playbook_id'"
-          fi
-
           echo "::group::🆕 New Session Configuration (v3 API)"
           echo "API endpoint: POST /v3/organizations/{org_id}/sessions"
           echo "Advanced mode: $advanced_mode"

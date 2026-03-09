@@ -78,20 +78,25 @@ inputs:
     description: "If 'true', bypass the approval step for batch session creation (v3 API only, batch mode). Requires UseDevinExpert permission."
     required: false
     default: "false"
-  reuse-devin-session:
+  reuse-initial-devin-session:
     description: |
-      Session reuse strategy for slash commands. Options:
-        - 'none' (default): Always create a new session.
-        - 'same-slash-command': Automatically find a previous Devin session from the same slash command
-          on the same issue/PR. Extracts the slash command from the current comment (first word), then
-          searches for the last comment starting with the same command that contains a Devin session URL.
-          If found, injects a message into that session. If not found, creates a new session.
-          Requires comment-id and issue-number.
-        - 'initial-session': Searches the issue/PR body for a Devin session URL. If found, injects
-          a message. If not found, creates a new session. Requires issue-number.
-      On injection failure, the action hard-fails (no fallback to new session).
+      If 'true', will attempt to reuse a Devin session found in the original issue or PR body.
+      Searches the issue/PR description for a Devin session URL. If found, injects a message
+      into that session. If not found, falls through to reuse-slash-command-session (if enabled)
+      or creates a new session. On injection failure, the action hard-fails (no fallback).
+      Requires issue-number.
     required: false
-    default: "none"
+    default: "false"
+  reuse-slash-command-session:
+    description: |
+      If 'true', will attempt to reuse a Devin session from a previous invocation of the same
+      slash command on the same issue/PR. Extracts the slash command from the current comment
+      (first word), searches for the last comment starting with the same command that contains
+      a Devin session URL. If found, injects a message into that session. If not found, creates
+      a new session. On injection failure, the action hard-fails (no fallback).
+      Requires comment-id and issue-number.
+    required: false
+    default: "false"
 
 outputs:
   session-id:
@@ -256,40 +261,33 @@ runs:
           exit 1
         fi
 
-        # Validate reuse-devin-session input
-        reuse_mode="${{ inputs.reuse-devin-session }}"
-        case "$reuse_mode" in
-          none|""|same-slash-command|initial-session)
-            ;;
-          *)
-            echo "::error::Invalid reuse-devin-session '$reuse_mode'. Must be one of: none, same-slash-command, initial-session."
-            exit 1
-            ;;
-        esac
+        # Validate reuse-initial-devin-session and reuse-slash-command-session inputs
+        reuse_initial="${{ inputs.reuse-initial-devin-session }}"
+        reuse_slash="${{ inputs.reuse-slash-command-session }}"
 
-        # same-slash-command requires comment-id and issue-number
-        if [[ "$reuse_mode" == "same-slash-command" ]]; then
+        # reuse-slash-command-session requires comment-id and issue-number
+        if [[ "$reuse_slash" == "true" ]]; then
           if [[ -z "${{ inputs.comment-id }}" ]]; then
-            echo "::error::reuse-devin-session 'same-slash-command' requires 'comment-id' input."
+            echo "::error::reuse-slash-command-session requires 'comment-id' input."
             exit 1
           fi
           if [[ -z "${{ inputs.issue-number }}" ]]; then
-            echo "::error::reuse-devin-session 'same-slash-command' requires 'issue-number' input."
+            echo "::error::reuse-slash-command-session requires 'issue-number' input."
             exit 1
           fi
         fi
 
-        # initial-session requires issue-number
-        if [[ "$reuse_mode" == "initial-session" ]]; then
+        # reuse-initial-devin-session requires issue-number
+        if [[ "$reuse_initial" == "true" ]]; then
           if [[ -z "${{ inputs.issue-number }}" ]]; then
-            echo "::error::reuse-devin-session 'initial-session' requires 'issue-number' input."
+            echo "::error::reuse-initial-devin-session requires 'issue-number' input."
             exit 1
           fi
         fi
 
-        # reuse-devin-session is incompatible with explicit reuse-session
-        if [[ -n "$reuse_mode" && "$reuse_mode" != "none" && -n "${{ inputs.reuse-session }}" ]]; then
-          echo "::error::The 'reuse-devin-session' and 'reuse-session' inputs are mutually exclusive."
+        # reuse inputs are incompatible with explicit reuse-session
+        if [[ ("$reuse_initial" == "true" || "$reuse_slash" == "true") && -n "${{ inputs.reuse-session }}" ]]; then
+          echo "::error::The 'reuse-initial-devin-session'/'reuse-slash-command-session' and 'reuse-session' inputs are mutually exclusive."
           exit 1
         fi
 
@@ -409,20 +407,40 @@ runs:
 
     - name: Find existing session for reuse
       id: find-existing-session
-      if: inputs.reuse-devin-session == 'same-slash-command' || inputs.reuse-devin-session == 'initial-session'
+      if: inputs.reuse-initial-devin-session == 'true' || inputs.reuse-slash-command-session == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        REUSE_MODE: ${{ inputs.reuse-devin-session }}
+        REUSE_INITIAL: ${{ inputs.reuse-initial-devin-session }}
+        REUSE_SLASH: ${{ inputs.reuse-slash-command-session }}
         COMMENT_ID: ${{ inputs.comment-id }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         REPO: ${{ github.repository }}
       run: |
         set -euo pipefail
 
-        echo "::group::🔍 Session Reuse: $REUSE_MODE mode"
+        echo "::group::🔍 Session Reuse (initial=$REUSE_INITIAL, slash=$REUSE_SLASH)"
 
-        if [[ "$REUSE_MODE" == "same-slash-command" ]]; then
+        found_session_url=""
+
+        # Priority 1: Check the issue/PR body for an initial Devin session
+        if [[ "$REUSE_INITIAL" == "true" ]]; then
+          echo "Searching for Devin session URL in issue #$ISSUE_NUMBER body..."
+          issue_body=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER" --jq '.body // ""')
+
+          found_session_url=$(echo "$issue_body" \
+            | grep -oP 'https://app\.devin\.ai/sessions/[a-zA-Z0-9-]+' \
+            | tail -1 || true)
+
+          if [[ -n "$found_session_url" ]]; then
+            echo "Found existing session in issue/PR body: $found_session_url"
+          else
+            echo "No Devin session URL found in issue/PR body."
+          fi
+        fi
+
+        # Priority 2: If no session found yet, check for same slash command
+        if [[ -z "$found_session_url" && "$REUSE_SLASH" == "true" ]]; then
           # Step 1: Fetch the current comment and extract the slash command (first word)
           echo "Fetching current comment $COMMENT_ID..."
           current_comment_body=$(gh api "repos/$REPO/issues/comments/$COMMENT_ID" --jq '.body')
@@ -433,48 +451,31 @@ runs:
 
           # Validate it's a slash command (starts with /)
           if [[ "$slash_command" != /* ]]; then
-            echo "::error::reuse-devin-session 'same-slash-command' requires the triggering comment to start with a slash command (e.g. /ai-prove-fix). Got: '$slash_command'"
+            echo "::error::reuse-slash-command-session requires the triggering comment to start with a slash command (e.g. /ai-prove-fix). Got: '$slash_command'"
             exit 1
           fi
 
-          # Step 2: List all comments on the issue/PR and find the last one starting with the same command
+          # Step 2: List all comments and find the last one starting with the same command
           echo "Searching for previous '$slash_command' comments on issue #$ISSUE_NUMBER..."
-          # Fetch all comments, filter for ones starting with the same slash command, exclude current comment
           found_session_url=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" --paginate --jq \
             ".[] | select(.id != ($COMMENT_ID | tonumber)) | select(.body | startswith(\"$slash_command\")) | .body" \
             | grep -oP 'https://app\.devin\.ai/sessions/[a-zA-Z0-9-]+' \
             | tail -1 || true)
 
           if [[ -n "$found_session_url" ]]; then
-            session_id=$(echo "$found_session_url" | sed 's|.*/sessions/||')
-            echo "Found existing session from previous '$slash_command' invocation"
-            echo "Session ID: $session_id"
-            echo "Session URL: $found_session_url"
-            echo "session-id=$session_id" >> $GITHUB_OUTPUT
-            echo "session-url=$found_session_url" >> $GITHUB_OUTPUT
+            echo "Found existing session from previous '$slash_command' invocation: $found_session_url"
           else
             echo "No previous '$slash_command' session found — will create a new session"
           fi
+        fi
 
-        elif [[ "$REUSE_MODE" == "initial-session" ]]; then
-          # Fetch the issue/PR body and search for a Devin session URL
-          echo "Searching for Devin session URL in issue #$ISSUE_NUMBER body..."
-          issue_body=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER" --jq '.body // ""')
-
-          found_session_url=$(echo "$issue_body" \
-            | grep -oP 'https://app\.devin\.ai/sessions/[a-zA-Z0-9-]+' \
-            | tail -1 || true)
-
-          if [[ -n "$found_session_url" ]]; then
-            session_id=$(echo "$found_session_url" | sed 's|.*/sessions/||')
-            echo "Found existing session in issue body"
-            echo "Session ID: $session_id"
-            echo "Session URL: $found_session_url"
-            echo "session-id=$session_id" >> $GITHUB_OUTPUT
-            echo "session-url=$found_session_url" >> $GITHUB_OUTPUT
-          else
-            echo "No Devin session URL found in issue body — will create a new session"
-          fi
+        # Output the found session (if any)
+        if [[ -n "$found_session_url" ]]; then
+          session_id=$(echo "$found_session_url" | sed 's|.*/sessions/||')
+          echo "Session ID: $session_id"
+          echo "Session URL: $found_session_url"
+          echo "session-id=$session_id" >> $GITHUB_OUTPUT
+          echo "session-url=$found_session_url" >> $GITHUB_OUTPUT
         fi
 
         echo "::endgroup::"
@@ -489,7 +490,8 @@ runs:
         echo "::group::🔍 Input Summary"
         echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (explicit input)' || ([[ -n "${{ steps.find-existing-session.outputs.session-id }}" ]] && echo 'REUSE SESSION (auto-detected)' || echo 'CREATE NEW SESSION'))"
         echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "reuse-devin-session: ${{ inputs.reuse-devin-session }}"
+        echo "reuse-initial-devin-session: ${{ inputs.reuse-initial-devin-session }}"
+        echo "reuse-slash-command-session: ${{ inputs.reuse-slash-command-session }}"
         echo "auto-detected session: $([[ -n "${{ steps.find-existing-session.outputs.session-id }}" ]] && echo 'SET (${{ steps.find-existing-session.outputs.session-id }})' || echo 'NOT SET')"
         echo "tags: $([[ -n "${{ inputs.tags }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "dry-run: ${{ inputs.dry-run }}"

@@ -40,6 +40,25 @@ inputs:
   reuse-session:
     description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input."
     required: false
+  reuse-initial-devin-session:
+    description: |
+      If 'true', will attempt to reuse a Devin session found in the original issue or PR body.
+      Searches the issue/PR description for a Devin session URL. If found, injects a message
+      into that session. If not found, falls through to reuse-slash-command-session (if enabled)
+      or creates a new session. On injection failure, the action hard-fails (no fallback).
+      Requires issue-number.
+    required: false
+    default: "false"
+  reuse-slash-command-session:
+    description: |
+      If 'true', will attempt to reuse a Devin session from a previous invocation of the same
+      slash command on the same issue/PR. Extracts the slash command from the current comment
+      (first word), searches for the last comment starting with the same command that contains
+      a Devin session URL. If found, injects a message into that session. If not found, creates
+      a new session. On injection failure, the action hard-fails (no fallback).
+      Requires comment-id and issue-number.
+    required: false
+    default: "false"
   dry-run:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
@@ -76,25 +95,6 @@ inputs:
     required: false
   bypass-approval:
     description: "If 'true', bypass the approval step for batch session creation (v3 API only, batch mode). Requires UseDevinExpert permission."
-    required: false
-    default: "false"
-  reuse-initial-devin-session:
-    description: |
-      If 'true', will attempt to reuse a Devin session found in the original issue or PR body.
-      Searches the issue/PR description for a Devin session URL. If found, injects a message
-      into that session. If not found, falls through to reuse-slash-command-session (if enabled)
-      or creates a new session. On injection failure, the action hard-fails (no fallback).
-      Requires issue-number.
-    required: false
-    default: "false"
-  reuse-slash-command-session:
-    description: |
-      If 'true', will attempt to reuse a Devin session from a previous invocation of the same
-      slash command on the same issue/PR. Extracts the slash command from the current comment
-      (first word), searches for the last comment starting with the same command that contains
-      a Devin session URL. If found, injects a message into that session. If not found, creates
-      a new session. On injection failure, the action hard-fails (no fallback).
-      Requires comment-id and issue-number.
     required: false
     default: "false"
 

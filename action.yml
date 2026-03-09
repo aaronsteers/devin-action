@@ -297,6 +297,12 @@ runs:
           exit 1
         fi
 
+        # reuse inputs are incompatible with tags (tags only apply to new sessions)
+        if [[ ("$reuse_initial" == "true" || "$reuse_slash" == "true") && -n "${{ inputs.tags }}" ]]; then
+          echo "::error::The 'reuse-initial-devin-session'/'reuse-slash-command-session' and 'tags' inputs are mutually exclusive. Tags cannot be applied when reusing an existing session."
+          exit 1
+        fi
+
         echo "Input validation passed (effective API version: $effective_api_version)"
 
     - name: Build Devin prompt
@@ -475,38 +481,28 @@ runs:
           const issueNumber = Number('${{ inputs.issue-number }}');
           const sessionUrlPattern = /https:\/\/app\.devin\.ai\/sessions\/[a-zA-Z0-9-]+/g;
 
-          // Page through comments in descending order until a matching one is found
+          // Fetch all comments (ascending order — the only order the issue-level endpoint supports)
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: issueNumber,
+          });
+
+          // Search in reverse for the most recent matching comment (excluding current)
           let foundUrl = '';
-          let page = 1;
-
-          while (!foundUrl) {
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              per_page: 100,
-              page,
-              sort: 'created',
-              direction: 'desc',
-            });
-
-            if (!comments.length) break;
-
-            for (const c of comments) {
-              if (c.id === currentCommentId) continue;
-              if (c.body) {
-                const firstToken = c.body.trimStart().split(/\s+/)[0];
-                if (firstToken === slashCommand) {
-                  const urls = c.body.match(sessionUrlPattern);
-                  if (urls) {
-                    foundUrl = urls[urls.length - 1];
-                    break;
-                  }
+          for (let i = comments.length - 1; i >= 0; i--) {
+            const c = comments[i];
+            if (c.id === currentCommentId) continue;
+            if (c.body) {
+              const firstToken = c.body.trimStart().split(/\s+/)[0];
+              if (firstToken === slashCommand) {
+                const urls = c.body.match(sessionUrlPattern);
+                if (urls) {
+                  foundUrl = urls[urls.length - 1];
+                  break;
                 }
               }
             }
-
-            page += 1;
           }
 
           if (foundUrl) {

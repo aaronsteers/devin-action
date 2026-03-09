@@ -40,6 +40,25 @@ inputs:
   reuse-session:
     description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input."
     required: false
+  reuse-initial-devin-session:
+    description: |
+      If 'true', will attempt to reuse a Devin session found in the original issue or PR body.
+      Searches the issue/PR description for a Devin session URL. If found, injects a message
+      into that session. If not found, falls through to reuse-slash-command-session (if enabled)
+      or creates a new session. On injection failure, the action hard-fails (no fallback).
+      Requires issue-number.
+    required: false
+    default: "false"
+  reuse-slash-command-session:
+    description: |
+      If 'true', will attempt to reuse a Devin session from a previous invocation of the same
+      slash command on the same issue/PR. Extracts the slash command from the current comment
+      (first word), searches for the last comment starting with the same command that contains
+      a Devin session URL. If found, injects a message into that session. If not found, creates
+      a new session. On injection failure, the action hard-fails (no fallback).
+      Requires comment-id and issue-number.
+    required: false
+    default: "false"
   dry-run:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
@@ -242,6 +261,48 @@ runs:
           exit 1
         fi
 
+        # Validate reuse-initial-devin-session and reuse-slash-command-session inputs
+        reuse_initial="${{ inputs.reuse-initial-devin-session }}"
+        reuse_slash="${{ inputs.reuse-slash-command-session }}"
+
+        # reuse-slash-command-session requires comment-id and issue-number
+        if [[ "$reuse_slash" == "true" ]]; then
+          if [[ -z "${{ inputs.comment-id }}" ]]; then
+            echo "::error::reuse-slash-command-session requires 'comment-id' input."
+            exit 1
+          fi
+          if [[ -z "${{ inputs.issue-number }}" ]]; then
+            echo "::error::reuse-slash-command-session requires 'issue-number' input."
+            exit 1
+          fi
+        fi
+
+        # reuse-initial-devin-session requires issue-number
+        if [[ "$reuse_initial" == "true" ]]; then
+          if [[ -z "${{ inputs.issue-number }}" ]]; then
+            echo "::error::reuse-initial-devin-session requires 'issue-number' input."
+            exit 1
+          fi
+        fi
+
+        # reuse inputs are incompatible with explicit reuse-session
+        if [[ ("$reuse_initial" == "true" || "$reuse_slash" == "true") && -n "${{ inputs.reuse-session }}" ]]; then
+          echo "::error::The 'reuse-initial-devin-session'/'reuse-slash-command-session' and 'reuse-session' inputs are mutually exclusive."
+          exit 1
+        fi
+
+        # auto-reuse inputs are not supported when using API version v3 (session injection disabled)
+        if [[ "$effective_api_version" == "v3" && ( "$reuse_initial" == "true" || "$reuse_slash" == "true" ) ]]; then
+          echo "::error::'reuse-initial-devin-session' and 'reuse-slash-command-session' are not supported when effective_api_version is 'v3'."
+          exit 1
+        fi
+
+        # reuse inputs are incompatible with tags (tags only apply to new sessions)
+        if [[ ("$reuse_initial" == "true" || "$reuse_slash" == "true") && -n "${{ inputs.tags }}" ]]; then
+          echo "::error::The 'reuse-initial-devin-session'/'reuse-slash-command-session' and 'tags' inputs are mutually exclusive. Tags cannot be applied when reusing an existing session."
+          exit 1
+        fi
+
         echo "Input validation passed (effective API version: $effective_api_version)"
 
     - name: Build Devin prompt
@@ -342,7 +403,7 @@ runs:
     - name: Generate run link
       id: vars
       shell: bash
-      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+      run: echo "run-url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" | tee -a $GITHUB_OUTPUT
 
     - name: Post job start comment
       if: inputs.comment-id || inputs.issue-number
@@ -356,6 +417,115 @@ runs:
           > ${{ inputs.start-message || '🤖 **Starting Devin AI session...**' }}
           >
 
+    # ---------- Session Reuse: Priority 1 — Search issue/PR body ----------
+
+    - name: Search issue/PR body for Devin session URL
+      id: find-initial-session
+      if: inputs.reuse-initial-devin-session == 'true'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const issue = await github.rest.issues.get({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: Number('${{ inputs.issue-number }}'),
+          });
+          const body = issue.data.body || '';
+          const match = body.match(/https:\/\/app\.devin\.ai\/sessions\/[a-zA-Z0-9-]+/g);
+          if (match) {
+            const url = match[match.length - 1];
+            const id = url.replace(/.*\/sessions\//, '');
+            core.info(`Found session in issue/PR body: ${url}`);
+            core.setOutput('session-url', url);
+            core.setOutput('session-id', id);
+          } else {
+            core.info('No Devin session URL found in issue/PR body.');
+          }
+
+    # ---------- Session Reuse: Priority 2 — Search same slash command ----------
+
+    - name: Extract slash command from current comment
+      id: extract-slash-command
+      if: inputs.reuse-slash-command-session == 'true' && steps.find-initial-session.outputs.session-id == ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const comment = await github.rest.issues.getComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: Number('${{ inputs.comment-id }}'),
+          });
+          const firstWord = (comment.data.body || '').trimStart().split(/\s/)[0];
+          core.info(`Extracted slash command: '${firstWord}'`);
+          if (!firstWord.startsWith('/')) {
+            core.setFailed(
+              `reuse-slash-command-session requires the triggering comment to start with a slash command (e.g. /ai-prove-fix). Got: '${firstWord}'`
+            );
+            return;
+          }
+          core.setOutput('slash-command', firstWord);
+
+    - name: Find previous comment with same slash command
+      id: find-slash-command-comment
+      if: inputs.reuse-slash-command-session == 'true' && steps.find-initial-session.outputs.session-id == '' && steps.extract-slash-command.outputs.slash-command != ''
+      uses: actions/github-script@v7
+      env:
+        SLASH_COMMAND: ${{ steps.extract-slash-command.outputs.slash-command }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const slashCommand = process.env.SLASH_COMMAND;
+          const currentCommentId = Number('${{ inputs.comment-id }}');
+          const issueNumber = Number('${{ inputs.issue-number }}');
+          const sessionUrlPattern = /https:\/\/app\.devin\.ai\/sessions\/[a-zA-Z0-9-]+/g;
+
+          // Fetch all comments (ascending order — the only order the issue-level endpoint supports)
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: issueNumber,
+          });
+
+          // Search in reverse for the most recent matching comment (excluding current)
+          let foundUrl = '';
+          for (let i = comments.length - 1; i >= 0; i--) {
+            const c = comments[i];
+            if (c.id === currentCommentId) continue;
+            if (c.body) {
+              const firstToken = c.body.trimStart().split(/\s+/)[0];
+              if (firstToken === slashCommand) {
+                const urls = c.body.match(sessionUrlPattern);
+                if (urls) {
+                  foundUrl = urls[urls.length - 1];
+                  break;
+                }
+              }
+            }
+          }
+
+          if (foundUrl) {
+            const id = foundUrl.replace(/.*\/sessions\//, '');
+            core.info(`Found session from previous '${slashCommand}' invocation: ${foundUrl}`);
+            core.setOutput('session-url', foundUrl);
+            core.setOutput('session-id', id);
+          } else {
+            core.info(`No previous '${slashCommand}' session found — will create a new session`);
+          }
+
+    # ---------- Session Reuse: Resolve winner ----------
+
+    - name: Resolve reuse session
+      id: find-existing-session
+      if: steps.find-initial-session.outputs.session-id != '' || steps.find-slash-command-comment.outputs.session-id != ''
+      shell: bash
+      run: |
+        session_id="${{ steps.find-initial-session.outputs.session-id || steps.find-slash-command-comment.outputs.session-id }}"
+        session_url="${{ steps.find-initial-session.outputs.session-url || steps.find-slash-command-comment.outputs.session-url }}"
+        echo "session-id=$session_id" | tee -a $GITHUB_OUTPUT
+        echo "session-url=$session_url" | tee -a $GITHUB_OUTPUT
+
     - name: Resolve session vars
       id: resolve-vars
       shell: bash
@@ -364,8 +534,11 @@ runs:
 
         # ===== DEBUG: Print input summary =====
         echo "::group::🔍 Input Summary"
-        echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (inject message)' || echo 'CREATE NEW SESSION')"
+        echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (explicit input)' || ([[ -n "${{ steps.find-existing-session.outputs.session-id }}" ]] && echo 'REUSE SESSION (auto-detected)' || echo 'CREATE NEW SESSION'))"
         echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "reuse-initial-devin-session: ${{ inputs.reuse-initial-devin-session }}"
+        echo "reuse-slash-command-session: ${{ inputs.reuse-slash-command-session }}"
+        echo "auto-detected session: $([[ -n "${{ steps.find-existing-session.outputs.session-id }}" ]] && echo 'SET (${{ steps.find-existing-session.outputs.session-id }})' || echo 'NOT SET')"
         echo "tags: $([[ -n "${{ inputs.tags }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "dry-run: ${{ inputs.dry-run }}"
         echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
@@ -383,7 +556,8 @@ runs:
         echo "api-version: ${{ inputs.api-version }}"
         echo "::endgroup::"
 
-        # Parse reuse-session input if provided
+        # Parse reuse-session input if provided (explicit or auto-detected)
+        auto_session_id="${{ steps.find-existing-session.outputs.session-id }}"
         if [[ -n "${{ inputs.reuse-session }}" ]]; then
           reuse_input="${{ inputs.reuse-session }}"
           
@@ -415,13 +589,25 @@ runs:
           echo "::endgroup::"
           
           # Output resolved values
-          echo "session-id=$session_id" >> $GITHUB_OUTPUT
-          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-id=$session_id" | tee -a $GITHUB_OUTPUT
+          echo "session-url=$session_url" | tee -a $GITHUB_OUTPUT
+        elif [[ -n "$auto_session_id" ]]; then
+          # Auto-detected session from find-existing-session step
+          echo "::group::🔄 Session Reuse Configuration (auto-detected)"
+          session_id="$auto_session_id"
+          session_url="${{ steps.find-existing-session.outputs.session-url }}"
+          echo "Auto-detected session ID: $session_id"
+          echo "Auto-detected session URL: $session_url"
+          echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          echo "::endgroup::"
+
+          echo "session-id=$session_id" | tee -a $GITHUB_OUTPUT
+          echo "session-url=$session_url" | tee -a $GITHUB_OUTPUT
         fi
 
     - name: Inject message into existing session
       id: inject-message
-      if: inputs.reuse-session != '' && steps.build-prompt.outputs.prompt != ''
+      if: (inputs.reuse-session != '' || steps.find-existing-session.outputs.session-id != '') && steps.build-prompt.outputs.prompt != ''
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -457,8 +643,8 @@ runs:
           echo "session-id=$session_id"
           echo "session-url=$session_url"
           echo "::endgroup::"
-          echo "session-id=$session_id" >> $GITHUB_OUTPUT
-          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-id=$session_id" | tee -a $GITHUB_OUTPUT
+          echo "session-url=$session_url" | tee -a $GITHUB_OUTPUT
           exit 0
         fi
 
@@ -484,8 +670,8 @@ runs:
           echo "session-id=$session_id"
           echo "session-url=$session_url"
           echo "::endgroup::"
-          echo "session-id=$session_id" >> $GITHUB_OUTPUT
-          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-id=$session_id" | tee -a $GITHUB_OUTPUT
+          echo "session-url=$session_url" | tee -a $GITHUB_OUTPUT
         else
           echo "::error::Failed to inject message into Devin session. HTTP Status: $http_status"
           echo "Response: $response_body"
@@ -494,7 +680,7 @@ runs:
 
     - name: Create new Devin session
       id: create-session
-      if: inputs.reuse-session == ''
+      if: inputs.reuse-session == '' && steps.find-existing-session.outputs.session-id == ''
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
@@ -703,8 +889,8 @@ runs:
         echo "session-url=$session_url"
         echo "::endgroup::"
 
-        echo "session-id=$session_id" >> $GITHUB_OUTPUT
-        echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        echo "session-id=$session_id" | tee -a $GITHUB_OUTPUT
+        echo "session-url=$session_url" | tee -a $GITHUB_OUTPUT
 
     - name: Wait for session status
       id: wait-for-status
@@ -799,7 +985,7 @@ runs:
             echo "::endgroup::"
 
             # Output: status
-            echo "status=$current_status" >> $GITHUB_OUTPUT
+            echo "status=$current_status" | tee -a $GITHUB_OUTPUT
 
             # Output: summary (last message)
             last_message=$(echo "$response_body" | jq -r '
@@ -833,7 +1019,7 @@ runs:
         body: |
           > - 🔗 **Session URL:** ${{ steps.inject-message.outputs.session-url || steps.create-session.outputs.session-url }}
           >
-          > ✅ **Devin AI session ${{ inputs.reuse-session != '' && 'message sent' || 'created' }} successfully!**
+          > ✅ **Devin AI session ${{ (inputs.reuse-session != '' || steps.find-existing-session.outputs.session-id != '') && 'message sent' || 'created' }} successfully!**
 
     - name: Append failure comment
       if: failure() && steps.comment-start.outputs.comment-id
@@ -843,7 +1029,7 @@ runs:
         comment-id: ${{ steps.comment-start.outputs.comment-id }}
         reactions: confused
         body: |
-          > ❌ **Failed to ${{ inputs.reuse-session != '' && 'send message to' || 'create' }} Devin AI session.**
+          > ❌ **Failed to ${{ (inputs.reuse-session != '' || steps.find-existing-session.outputs.session-id != '') && 'send message to' || 'create' }} Devin AI session.**
           >
           > - ⚙️ [Link to job logs.](${{ steps.vars.outputs.run-url }})
           >

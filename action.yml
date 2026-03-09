@@ -291,6 +291,12 @@ runs:
           exit 1
         fi
 
+        # auto-reuse inputs are not supported when using API version v3 (session injection disabled)
+        if [[ "$effective_api_version" == "v3" && ( "$reuse_initial" == "true" || "$reuse_slash" == "true" ) ]]; then
+          echo "::error::'reuse-initial-devin-session' and 'reuse-slash-command-session' are not supported when effective_api_version is 'v3'."
+          exit 1
+        fi
+
         echo "Input validation passed (effective API version: $effective_api_version)"
 
     - name: Build Devin prompt
@@ -445,7 +451,7 @@ runs:
             repo: context.repo.repo,
             comment_id: Number('${{ inputs.comment-id }}'),
           });
-          const firstWord = (comment.data.body || '').split(/\s/)[0];
+          const firstWord = (comment.data.body || '').trimStart().split(/\s/)[0];
           core.info(`Extracted slash command: '${firstWord}'`);
           if (!firstWord.startsWith('/')) {
             core.setFailed(
@@ -459,33 +465,48 @@ runs:
       id: find-slash-command-comment
       if: inputs.reuse-slash-command-session == 'true' && steps.find-initial-session.outputs.session-id == '' && steps.extract-slash-command.outputs.slash-command != ''
       uses: actions/github-script@v7
+      env:
+        SLASH_COMMAND: ${{ steps.extract-slash-command.outputs.slash-command }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          const slashCommand = '${{ steps.extract-slash-command.outputs.slash-command }}';
+          const slashCommand = process.env.SLASH_COMMAND;
           const currentCommentId = Number('${{ inputs.comment-id }}');
           const issueNumber = Number('${{ inputs.issue-number }}');
           const sessionUrlPattern = /https:\/\/app\.devin\.ai\/sessions\/[a-zA-Z0-9-]+/g;
 
-          // Paginate through all comments on the issue
-          const comments = await github.paginate(github.rest.issues.listComments, {
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: issueNumber,
-          });
-
-          // Search in reverse for the last matching comment (excluding current)
+          // Page through comments in descending order until a matching one is found
           let foundUrl = '';
-          for (let i = comments.length - 1; i >= 0; i--) {
-            const c = comments[i];
-            if (c.id === currentCommentId) continue;
-            if (c.body && c.body.startsWith(slashCommand)) {
-              const urls = c.body.match(sessionUrlPattern);
-              if (urls) {
-                foundUrl = urls[urls.length - 1];
-                break;
+          let page = 1;
+
+          while (!foundUrl) {
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+              page,
+              sort: 'created',
+              direction: 'desc',
+            });
+
+            if (!comments.length) break;
+
+            for (const c of comments) {
+              if (c.id === currentCommentId) continue;
+              if (c.body) {
+                const firstToken = c.body.trimStart().split(/\s+/)[0];
+                if (firstToken === slashCommand) {
+                  const urls = c.body.match(sessionUrlPattern);
+                  if (urls) {
+                    foundUrl = urls[urls.length - 1];
+                    break;
+                  }
+                }
               }
             }
+
+            page += 1;
           }
 
           if (foundUrl) {

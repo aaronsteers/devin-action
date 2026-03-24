@@ -75,7 +75,7 @@ inputs:
     description: "Playbook ID for child sessions (v3 API only). Required when advanced-mode is 'batch' or 'improve'."
     required: false
   bypass-approval:
-    description: "If 'true', bypass the approval step for batch session creation (v3 API only, batch mode). Requires UseDevinExpert permission."
+    description: "If 'true', bypass the approval step for session creation (v3 API only). Requires UseDevinExpert permission."
     required: false
     default: "false"
 
@@ -230,11 +230,7 @@ runs:
           fi
         fi
 
-        # bypass-approval only applies to batch mode
-        if [[ "$bypass_approval" == "true" && "$advanced_mode" != "batch" ]]; then
-          echo "::error::The 'bypass-approval' input is only valid when advanced-mode is 'batch'."
-          exit 1
-        fi
+        # bypass-approval is a v3 feature (no longer restricted to batch mode only)
 
         # v3 features are incompatible with reuse-session
         if [[ "$effective_api_version" == "v3" && -n "${{ inputs.reuse-session }}" ]]; then

@@ -95,6 +95,9 @@ outputs:
   run-url:
     description: "The GitHub Actions run URL"
     value: ${{ steps.vars.outputs.run-url }}
+  start-comment-id:
+    description: "The comment ID of the initial start message posted to the issue/PR (if any)"
+    value: ${{ steps.comment-start.outputs.comment-id }}
   status:
     description: "The terminal status_enum value when polling completes (only set when wait-for-stopped-status is enabled)"
     value: ${{ steps.wait-for-status.outputs.status }}
@@ -356,6 +359,26 @@ runs:
           > ${{ inputs.start-message || '🤖 **Starting Devin AI session...**' }}
           >
 
+    - name: Augment prompt with start comment context
+      id: augment-prompt
+      if: steps.comment-start.outputs.comment-id && steps.build-prompt.outputs.prompt
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        start_comment_id="${{ steps.comment-start.outputs.comment-id }}"
+        original_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d)
+
+        augmented_prompt="${original_prompt}
+
+GITHUB_START_COMMENT_ID: ${start_comment_id}
+Note: A progress comment has already been posted on this issue/PR (comment ID: ${start_comment_id}). When posting your initial status update and final report, UPDATE this existing comment (using the GitHub API with this comment ID) instead of creating a new comment. This reduces comment noise on the issue."
+
+        echo "prompt<<EOF" >> $GITHUB_OUTPUT
+        printf '%s' "$augmented_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
+        echo >> $GITHUB_OUTPUT  # Add newline before EOF
+        echo "EOF" >> $GITHUB_OUTPUT
+
     - name: Resolve session vars
       id: resolve-vars
       shell: bash
@@ -436,8 +459,8 @@ runs:
         echo "Session ID: $session_id"
         echo "Session URL: $session_url"
 
-        # Decode the base64-encoded prompt
-        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
+        # Decode the base64-encoded prompt (prefer augmented prompt if available)
+        decoded_prompt=$(echo "${{ steps.augment-prompt.outputs.prompt || steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
         echo "Prompt length: ${#decoded_prompt} characters"
 
         # Prepare the message API request payload
@@ -547,8 +570,8 @@ runs:
 
         echo "Creating new Devin session..."
 
-        # Decode the base64-encoded prompt
-        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
+        # Decode the base64-encoded prompt (prefer augmented prompt if available)
+        decoded_prompt=$(echo "${{ steps.augment-prompt.outputs.prompt || steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
         echo "Prompt length: ${#decoded_prompt} characters"
 
         # Build automatic tags

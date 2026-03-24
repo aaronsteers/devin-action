@@ -621,9 +621,9 @@ runs:
             --arg bypass "$bypass_approval" \
             '{
               "prompt": $prompt,
-              "advanced_mode": $advanced_mode,
               "tags": $tags
             }
+            | if $advanced_mode != "" then . + {"advanced_mode": $advanced_mode} else . end
             | if $session_links != null then . + {"session_links": $session_links} else . end
             | if $max_acu != "" then . + {"max_acu_limit": ($max_acu | tonumber)} else . end
             | if $playbook != "" then . + {"playbook_id": $playbook} else . end

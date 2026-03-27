@@ -407,7 +407,11 @@ runs:
           session_url="https://app.devin.ai/sessions/${session_id}"
           echo "Final session ID: $session_id"
           echo "Final session URL: $session_url"
-          echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          if [[ -n "${{ inputs.org-id }}" ]]; then
+            echo "API endpoint: POST /v3/organizations/{org_id}/sessions/devin-${session_id}/messages (org-scoped)"
+          else
+            echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          fi
           echo "::endgroup::"
           
           # Output resolved values
@@ -460,18 +464,24 @@ runs:
           exit 0
         fi
 
-        # Build curl headers
-        curl_headers=(-H "Authorization: Bearer ${DEVIN_TOKEN}" -H "Content-Type: application/json")
+        # Select API endpoint based on whether org-id is provided
         if [[ -n "${DEVIN_ORG_ID}" ]]; then
-          echo "Including org-id header for org-scoped authentication"
-          curl_headers+=(-H "X-Devin-Org-Id: ${DEVIN_ORG_ID}")
+          # Use v3 message endpoint for org-scoped sessions (e.g. sessions created via v3 API)
+          devin_id="devin-${session_id}"
+          api_url="https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions/${devin_id}/messages"
+          echo "Using v3 message endpoint (org-scoped): POST /v3/organizations/{org_id}/sessions/${devin_id}/messages"
+        else
+          # Use v1 message endpoint for personal sessions
+          api_url="https://api.devin.ai/v1/sessions/${session_id}/message"
+          echo "Using v1 message endpoint: POST /v1/sessions/${session_id}/message"
         fi
 
         # Make API call to send message to existing session
         response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
-          "${curl_headers[@]}" \
+          -H "Authorization: Bearer ${DEVIN_TOKEN}" \
+          -H "Content-Type: application/json" \
           -d @devin_request.json \
-          "https://api.devin.ai/v1/sessions/${session_id}/message")
+          "$api_url")
 
         # Extract HTTP status code
         http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d':' -f2)

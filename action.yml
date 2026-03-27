@@ -38,7 +38,7 @@ inputs:
     description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided. Cannot be used with reuse-session."
     required: false
   reuse-session:
-    description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input."
+    description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input. When targeting a session created via the v3 API, also provide 'org-id' for org-scoped authentication."
     required: false
   dry-run:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
@@ -63,7 +63,7 @@ inputs:
     description: "Session URLs or IDs to provide as context (optional, supports CSV or line-delimited format). Required when advanced-mode is 'analyze'. When provided without advanced-mode, defaults to 'analyze' mode automatically."
     required: false
   org-id:
-    description: "Devin organization ID (required when using v3 API features such as advanced-mode or session-links). For org-scoped service users this may be auto-resolved, but providing it explicitly is recommended."
+    description: "Devin organization ID (required when using v3 API features such as advanced-mode or session-links). Also used with reuse-session to authenticate against sessions created via the v3 API. For org-scoped service users this may be auto-resolved, but providing it explicitly is recommended."
     required: false
   max-acu-limit:
     description: "Maximum ACU limit for the session (optional, v3 API only). Caps the compute budget for the session."
@@ -407,7 +407,11 @@ runs:
           session_url="https://app.devin.ai/sessions/${session_id}"
           echo "Final session ID: $session_id"
           echo "Final session URL: $session_url"
-          echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          if [[ -n "${{ inputs.org-id }}" ]]; then
+            echo "API endpoint: POST /v3/organizations/{org_id}/sessions/devin-${session_id}/messages (org-scoped)"
+          else
+            echo "API endpoint: POST /v1/sessions/${session_id}/message"
+          fi
           echo "::endgroup::"
           
           # Output resolved values
@@ -421,6 +425,7 @@ runs:
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
+        DEVIN_ORG_ID: ${{ inputs.org-id }}
       run: |
         set -euo pipefail
 
@@ -431,6 +436,7 @@ runs:
         echo "Injecting message into existing Devin session..."
         echo "Session ID: $session_id"
         echo "Session URL: $session_url"
+        echo "Org ID: ${DEVIN_ORG_ID:-(not set)}"
 
         # Decode the base64-encoded prompt
         decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
@@ -458,12 +464,24 @@ runs:
           exit 0
         fi
 
+        # Select API endpoint based on whether org-id is provided
+        if [[ -n "${DEVIN_ORG_ID}" ]]; then
+          # Use v3 message endpoint for org-scoped sessions (e.g. sessions created via v3 API)
+          devin_id="devin-${session_id}"
+          api_url="https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions/${devin_id}/messages"
+          echo "Using v3 message endpoint (org-scoped): POST /v3/organizations/{org_id}/sessions/${devin_id}/messages"
+        else
+          # Use v1 message endpoint for personal sessions
+          api_url="https://api.devin.ai/v1/sessions/${session_id}/message"
+          echo "Using v1 message endpoint: POST /v1/sessions/${session_id}/message"
+        fi
+
         # Make API call to send message to existing session
         response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
           -H "Authorization: Bearer ${DEVIN_TOKEN}" \
           -H "Content-Type: application/json" \
           -d @devin_request.json \
-          "https://api.devin.ai/v1/sessions/${session_id}/message")
+          "$api_url")
 
         # Extract HTTP status code
         http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d':' -f2)

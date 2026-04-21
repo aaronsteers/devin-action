@@ -78,6 +78,9 @@ inputs:
     description: "If 'true', bypass the approval step for session creation (v3 API only). Requires UseDevinExpert permission."
     required: false
     default: "false"
+  structured-output-schema:
+    description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Supported on both v1 and v3 session creation. Ignored when using 'reuse-session'."
+    required: false
 
 outputs:
   session-id:
@@ -108,6 +111,8 @@ runs:
 
     - name: Validate inputs
       shell: bash
+      env:
+        DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
       run: |
         set -euo pipefail
 
@@ -238,6 +243,38 @@ runs:
           exit 1
         fi
 
+        # Validate structured-output-schema is a YAML or JSON object (if provided).
+        # Accept YAML input (YAML 1.2 is a superset of JSON, so plain JSON also parses).
+        # Normalize to compact JSON and persist via $GITHUB_ENV so downstream steps
+        # don't need to re-parse.
+        if [[ -n "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
+          schema_json=""
+          if command -v yq >/dev/null 2>&1; then
+            schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | yq -o=json eval '.' - 2>/dev/null) || schema_json=""
+          fi
+          if [[ -z "$schema_json" ]] && command -v python3 >/dev/null 2>&1; then
+            schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | python3 -c 'import sys, json; import yaml; json.dump(yaml.safe_load(sys.stdin), sys.stdout)' 2>/dev/null) || schema_json=""
+          fi
+          if [[ -z "$schema_json" ]]; then
+            # Last-ditch: try jq for pure JSON (covers runners without yq or PyYAML).
+            schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | jq -c '.' 2>/dev/null) || schema_json=""
+          fi
+          if [[ -z "$schema_json" ]]; then
+            echo "::error::Failed to parse 'structured-output-schema' as YAML or JSON. Runner needs 'yq', 'python3' with PyYAML, or valid JSON parseable by 'jq'."
+            exit 1
+          fi
+          if ! printf '%s' "$schema_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "::error::The 'structured-output-schema' input must be a YAML or JSON object (got a non-object value)."
+            exit 1
+          fi
+          # Persist normalized compact JSON for the Create Session step.
+          schema_json_compact=$(printf '%s' "$schema_json" | jq -c '.')
+          echo "DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON=${schema_json_compact}" >> "$GITHUB_ENV"
+          if [[ -n "${{ inputs.reuse-session }}" ]]; then
+            echo "::warning::The 'structured-output-schema' input is only applied when creating a new session; it will be ignored because 'reuse-session' is set."
+          fi
+        fi
+
         echo "Input validation passed (effective API version: $effective_api_version)"
 
     - name: Build Devin prompt
@@ -355,6 +392,8 @@ runs:
     - name: Resolve session vars
       id: resolve-vars
       shell: bash
+      env:
+        DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
       run: |
         set -euo pipefail
 
@@ -377,6 +416,7 @@ runs:
         echo "child-playbook-id: $([[ -n "${{ inputs.child-playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "bypass-approval: ${{ inputs.bypass-approval }}"
         echo "api-version: ${{ inputs.api-version }}"
+        echo "structured-output-schema: $([[ -n "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "::endgroup::"
 
         # Parse reuse-session input if provided
@@ -512,6 +552,7 @@ runs:
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
+        DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
       run: |
         set -euo pipefail
 
@@ -602,6 +643,10 @@ runs:
         # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
 
+        # Use the normalized JSON persisted by the Validate inputs step.
+        # This is already compact JSON and known to be a top-level object.
+        structured_output_schema_json="${DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON:-null}"
+
         if [[ "$use_v3" == "true" ]]; then
           # ===== V3 API payload =====
 
@@ -633,6 +678,7 @@ runs:
             --arg playbook "$playbook_id" \
             --arg child_playbook "$child_playbook_id" \
             --arg bypass "$bypass_approval" \
+            --argjson structured_output_schema "$structured_output_schema_json" \
             '{
               "prompt": $prompt,
               "tags": $tags
@@ -642,7 +688,8 @@ runs:
             | if $max_acu != "" then . + {"max_acu_limit": ($max_acu | tonumber)} else . end
             | if $playbook != "" then . + {"playbook_id": $playbook} else . end
             | if $child_playbook != "" then . + {"child_playbook_id": $child_playbook} else . end
-            | if $bypass == "true" then . + {"bypass_approval": true} else . end' > devin_request.json
+            | if $bypass == "true" then . + {"bypass_approval": true} else . end
+            | if $structured_output_schema != null then . + {"structured_output_schema": $structured_output_schema} else . end' > devin_request.json
 
         else
           # ===== V1 API payload =====
@@ -668,13 +715,15 @@ runs:
             --arg branch "${{ github.ref_name }}" \
             --argjson tags "$tags_array" \
             --argjson metadata "$metadata_json" \
+            --argjson structured_output_schema "$structured_output_schema_json" \
             '{
               "prompt": $prompt,
               "repository_url": $repo_url,
               "branch": $branch,
               "tags": $tags,
               "metadata": $metadata
-            }' > devin_request.json
+            }
+            | if $structured_output_schema != null then . + {"structured_output_schema": $structured_output_schema} else . end' > devin_request.json
         fi
 
         echo "::group::📤 Devin API Request"

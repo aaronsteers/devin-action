@@ -37,6 +37,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `max-acu-limit` | Maximum ACU limit for the session (v3 API only). | false | |
 | `child-playbook-id` | Playbook ID for child sessions (v3 API only). Required for `batch` and `improve` modes. | false | |
 | `bypass-approval` | If `true`, bypass approval for batch session creation (v3 batch mode only). Requires `UseDevinExpert` permission. | false | `false` |
+| `structured-output-schema` | JSON Schema (as a JSON object) describing the structured output Devin should produce. Supported on both v1 and v3 session creation. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
 
 ## Session Tagging
 
@@ -273,6 +274,69 @@ Use `max-acu-limit` to cap the compute budget for v3 sessions:
     advanced-mode: analyze
     session-links: 'https://app.devin.ai/sessions/abc123'
     max-acu-limit: 5
+```
+
+## Structured Output
+
+Use `structured-output-schema` to request that Devin produce structured output matching a JSON Schema. The schema is passed through as the `structured_output_schema` field on the session creation request. This is supported on both the v1 and v3 session-creation endpoints; it is ignored when using `reuse-session`.
+
+The input must be a JSON-encoded object. It is validated up front: invalid JSON or non-object values fail the action before calling the API.
+
+Once the session is running, the schema tells Devin what shape its "notepad" should take. Clients can then poll the session and read the latest structured output. See the [Devin structured output docs](https://docs.devin.ai/api-reference/structured-output) for more details.
+
+### Inline Schema
+
+```yaml
+- name: Run Devin with Structured Output
+  uses: aaronsteers/devin-action@v1
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    prompt-text: |
+      Review this PR and keep the structured output up to date with any issues
+      you find, suggestions you have, and your current approval status.
+    structured-output-schema: |
+      {
+        "type": "object",
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": { "type": "string" },
+                "line": { "type": "integer" },
+                "type": { "type": "string" },
+                "description": { "type": "string" }
+              }
+            }
+          },
+          "suggestions": { "type": "array", "items": { "type": "string" } },
+          "approved": { "type": "boolean" }
+        },
+        "required": ["approved"]
+      }
+```
+
+### Schema From a File
+
+For longer schemas, store the JSON in a file and pass its contents through a prior step output:
+
+```yaml
+- id: load-schema
+  shell: bash
+  run: |
+    {
+      echo "schema<<EOF"
+      cat .github/schemas/pr-review.json
+      echo "EOF"
+    } >> "$GITHUB_OUTPUT"
+
+- name: Run Devin with Structured Output
+  uses: aaronsteers/devin-action@v1
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    prompt-file: .github/prompts/pr-review.md
+    structured-output-schema: ${{ steps.load-schema.outputs.schema }}
 ```
 
 ## Context Gathering

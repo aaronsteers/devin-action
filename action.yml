@@ -79,7 +79,7 @@ inputs:
     required: false
     default: "false"
   structured-output-schema:
-    description: "JSON Schema (as a JSON object) describing the structured output Devin should produce. Supported on both v1 and v3 session creation. Must be a JSON-encoded object (e.g. '{\"type\":\"object\",\"properties\":{...}}'). Ignored when using 'reuse-session'."
+    description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Supported on both v1 and v3 session creation. Ignored when using 'reuse-session'."
     required: false
 
 outputs:
@@ -243,12 +243,33 @@ runs:
           exit 1
         fi
 
-        # Validate structured-output-schema is a JSON object (if provided)
+        # Validate structured-output-schema is a YAML or JSON object (if provided).
+        # Accept YAML input (YAML 1.2 is a superset of JSON, so plain JSON also parses).
+        # Normalize to compact JSON and persist via $GITHUB_ENV so downstream steps
+        # don't need to re-parse.
         if [[ -n "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
-          if ! printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | jq -e 'type == "object"' >/dev/null 2>&1; then
-            echo "::error::The 'structured-output-schema' input must be a JSON-encoded object (got invalid JSON or non-object value)."
+          schema_json=""
+          if command -v yq >/dev/null 2>&1; then
+            schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | yq -o=json eval '.' - 2>/dev/null) || schema_json=""
+          fi
+          if [[ -z "$schema_json" ]] && command -v python3 >/dev/null 2>&1; then
+            schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | python3 -c 'import sys, json; import yaml; json.dump(yaml.safe_load(sys.stdin), sys.stdout)' 2>/dev/null) || schema_json=""
+          fi
+          if [[ -z "$schema_json" ]]; then
+            # Last-ditch: try jq for pure JSON (covers runners without yq or PyYAML).
+            schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | jq -c '.' 2>/dev/null) || schema_json=""
+          fi
+          if [[ -z "$schema_json" ]]; then
+            echo "::error::Failed to parse 'structured-output-schema' as YAML or JSON. Runner needs 'yq', 'python3' with PyYAML, or valid JSON parseable by 'jq'."
             exit 1
           fi
+          if ! printf '%s' "$schema_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "::error::The 'structured-output-schema' input must be a YAML or JSON object (got a non-object value)."
+            exit 1
+          fi
+          # Persist normalized compact JSON for the Create Session step.
+          schema_json_compact=$(printf '%s' "$schema_json" | jq -c '.')
+          echo "DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON=${schema_json_compact}" >> "$GITHUB_ENV"
           if [[ -n "${{ inputs.reuse-session }}" ]]; then
             echo "::warning::The 'structured-output-schema' input is only applied when creating a new session; it will be ignored because 'reuse-session' is set."
           fi
@@ -622,15 +643,9 @@ runs:
         # Convert to JSON array
         tags_array=$(printf '%s\n' "${all_tags[@]}" | jq -R . | jq -s .)
 
-        # Parse structured-output-schema once; reused for both v1 and v3 payloads
-        structured_output_schema_json="null"
-        if [[ -n "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
-          # Normalize via jq so it serializes cleanly in the payload
-          if ! structured_output_schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | jq -c '.'); then
-            echo "::error::Failed to parse 'structured-output-schema' as JSON."
-            exit 1
-          fi
-        fi
+        # Use the normalized JSON persisted by the Validate inputs step.
+        # This is already compact JSON and known to be a top-level object.
+        structured_output_schema_json="${DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON:-null}"
 
         if [[ "$use_v3" == "true" ]]; then
           # ===== V3 API payload =====

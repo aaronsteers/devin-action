@@ -37,7 +37,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `max-acu-limit` | Maximum ACU limit for the session (v3 API only). | false | |
 | `child-playbook-id` | Playbook ID for child sessions (v3 API only). Required for `batch` and `improve` modes. | false | |
 | `bypass-approval` | If `true`, bypass approval for batch session creation (v3 batch mode only). Requires `UseDevinExpert` permission. | false | `false` |
-| `structured-output-schema` | JSON Schema (as a JSON object) describing the structured output Devin should produce. Supported on both v1 and v3 session creation. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
+| `structured-output-schema` | JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Supported on both v1 and v3 session creation. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
 
 ## Session Tagging
 
@@ -280,11 +280,13 @@ Use `max-acu-limit` to cap the compute budget for v3 sessions:
 
 Use `structured-output-schema` to request that Devin produce structured output matching a JSON Schema. The schema is passed through as the `structured_output_schema` field on the session creation request. This is supported on both the v1 and v3 session-creation endpoints; it is ignored when using `reuse-session`.
 
-The input must be a JSON-encoded object. It is validated up front: invalid JSON or non-object values fail the action before calling the API.
+The input accepts either YAML or JSON. YAML 1.2 is a strict superset of JSON, so existing JSON schemas are still valid. The input is validated up front: anything that doesn't parse to a top-level object fails the action before calling the API.
 
 Once the session is running, the schema tells Devin what shape its "notepad" should take. Clients can then poll the session and read the latest structured output. See the [Devin structured output docs](https://docs.devin.ai/api-reference/structured-output) for more details.
 
-### Inline Schema
+### Inline Schema (YAML)
+
+YAML is usually easier to read inside a workflow since you can skip the quotes and braces:
 
 ```yaml
 - name: Run Devin with Structured Output
@@ -295,23 +297,41 @@ Once the session is running, the schema tells Devin what shape its "notepad" sho
       Review this PR and keep the structured output up to date with any issues
       you find, suggestions you have, and your current approval status.
     structured-output-schema: |
+      type: object
+      required: [approved]
+      properties:
+        issues:
+          type: array
+          items:
+            type: object
+            properties:
+              file: { type: string }
+              line: { type: integer }
+              type: { type: string }
+              description: { type: string }
+        suggestions:
+          type: array
+          items: { type: string }
+        approved:
+          type: boolean
+```
+
+### Inline Schema (JSON)
+
+Plain JSON also works unchanged:
+
+```yaml
+- name: Run Devin with Structured Output
+  uses: aaronsteers/devin-action@v1
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    prompt-text: "Review this PR and keep the structured output up to date."
+    structured-output-schema: |
       {
         "type": "object",
         "properties": {
-          "issues": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "file": { "type": "string" },
-                "line": { "type": "integer" },
-                "type": { "type": "string" },
-                "description": { "type": "string" }
-              }
-            }
-          },
-          "suggestions": { "type": "array", "items": { "type": "string" } },
-          "approved": { "type": "boolean" }
+          "approved": { "type": "boolean" },
+          "suggestions": { "type": "array", "items": { "type": "string" } }
         },
         "required": ["approved"]
       }
@@ -319,7 +339,7 @@ Once the session is running, the schema tells Devin what shape its "notepad" sho
 
 ### Schema From a File
 
-For longer schemas, store the JSON in a file and pass its contents through a prior step output:
+For longer schemas, store them in a `.yaml` (or `.json`) file and pass the contents through a prior step output:
 
 ```yaml
 - id: load-schema
@@ -327,7 +347,7 @@ For longer schemas, store the JSON in a file and pass its contents through a pri
   run: |
     {
       echo "schema<<EOF"
-      cat .github/schemas/pr-review.json
+      cat .github/schemas/pr-review.yaml
       echo "EOF"
     } >> "$GITHUB_OUTPUT"
 
@@ -338,6 +358,16 @@ For longer schemas, store the JSON in a file and pass its contents through a pri
     prompt-file: .github/prompts/pr-review.md
     structured-output-schema: ${{ steps.load-schema.outputs.schema }}
 ```
+
+### Runner Requirements
+
+Parsing tries the following in order, so any one of these on the runner is enough:
+
+1. `yq` (mikefarah's — preinstalled on GitHub-hosted `ubuntu-latest`).
+2. `python3` with PyYAML (also preinstalled on GitHub-hosted `ubuntu-latest`).
+3. `jq` (JSON-only fallback — `jq` is already a hard dependency of this action).
+
+On minimal self-hosted runners without `yq` or PyYAML, YAML input will be rejected and only JSON will parse.
 
 ## Context Gathering
 

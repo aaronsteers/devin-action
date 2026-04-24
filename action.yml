@@ -572,6 +572,7 @@ runs:
         playbook_id="${{ inputs.playbook-id }}"
         child_playbook_id="${{ inputs.child-playbook-id }}"
         bypass_approval="${{ inputs.bypass-approval }}"
+        session_title="${{ inputs.title }}"
 
         # session-links without advanced-mode defaults to analyze
         if [[ -z "$advanced_mode" && -n "$session_links_input" ]]; then
@@ -580,7 +581,7 @@ runs:
 
         # Determine effective API version
         if [[ "$api_version" == "auto" ]]; then
-          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$playbook_id" || -n "$child_playbook_id" || "$bypass_approval" == "true" ]]; then
+          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$playbook_id" || -n "$child_playbook_id" || "$bypass_approval" == "true" || -n "$session_title" ]]; then
             use_v3="true"
           else
             use_v3="false"
@@ -676,7 +677,6 @@ runs:
           fi
 
           # Build v3 request payload
-          session_title="${{ inputs.title }}"
           jq -n \
             --arg prompt "$decoded_prompt" \
             --arg advanced_mode "$advanced_mode" \

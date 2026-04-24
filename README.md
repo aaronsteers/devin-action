@@ -37,6 +37,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `max-acu-limit` | Maximum ACU limit for the session (v3 API only). | false | |
 | `child-playbook-id` | Playbook ID for child sessions (v3 API only). Required for `batch` and `improve` modes. | false | |
 | `bypass-approval` | If `true`, bypass approval for batch session creation (v3 batch mode only). Requires `UseDevinExpert` permission. | false | `false` |
+| `title` | Custom title for the session (v3 API only). Sets the session's display title instead of inheriting from the prompt. Useful for automated workflows where the prompt is long but you want a short, descriptive title. | false | |
 | `structured-output-schema` | JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Supported on both v1 and v3 session creation. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
 
 ## Session Tagging

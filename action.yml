@@ -421,7 +421,7 @@ runs:
         echo "playbook-id: $([[ -n "${{ inputs.playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "child-playbook-id: $([[ -n "${{ inputs.child-playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "bypass-approval: ${{ inputs.bypass-approval }}"
-        echo "title: $([[ -n "${{ inputs.title }}" ]] && echo 'SET (${{ inputs.title }})' || echo 'NOT SET')"
+        echo "title: $([[ -n "${{ inputs.title }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "api-version: ${{ inputs.api-version }}"
         echo "structured-output-schema: $([[ -n "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "::endgroup::"

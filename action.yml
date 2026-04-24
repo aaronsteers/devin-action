@@ -79,7 +79,7 @@ inputs:
     required: false
     default: "false"
   title:
-    description: "Custom title for the session (optional, v3 API only). If provided, sets the session's display title instead of inheriting from the prompt. Useful for automated workflows where the prompt is long but you want a short, descriptive title."
+    description: "Custom title for the session (optional, v3 API only). If provided, sets the session's display title instead of inheriting from the prompt. Useful for helping human users and administrators quickly locate and identify sessions by purpose and/or by origin."
     required: false
   structured-output-schema:
     description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Supported on both v1 and v3 session creation. Ignored when using 'reuse-session'."

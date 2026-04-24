@@ -78,6 +78,9 @@ inputs:
     description: "If 'true', bypass the approval step for session creation (v3 API only). Requires UseDevinExpert permission."
     required: false
     default: "false"
+  title:
+    description: "Custom title for the session (optional, v3 API only). If provided, sets the session's display title instead of inheriting from the prompt. Useful for automated workflows where the prompt is long but you want a short, descriptive title."
+    required: false
   structured-output-schema:
     description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Supported on both v1 and v3 session creation. Ignored when using 'reuse-session'."
     required: false
@@ -181,6 +184,9 @@ runs:
         fi
         if [[ "$bypass_approval" == "true" ]]; then
           v3_only_features+=("bypass-approval")
+        fi
+        if [[ -n "${{ inputs.title }}" ]]; then
+          v3_only_features+=("title")
         fi
 
         # Error if v1 is explicitly requested with v3-only features
@@ -415,6 +421,7 @@ runs:
         echo "playbook-id: $([[ -n "${{ inputs.playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "child-playbook-id: $([[ -n "${{ inputs.child-playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "bypass-approval: ${{ inputs.bypass-approval }}"
+        echo "title: $([[ -n "${{ inputs.title }}" ]] && echo 'SET (${{ inputs.title }})' || echo 'NOT SET')"
         echo "api-version: ${{ inputs.api-version }}"
         echo "structured-output-schema: $([[ -n "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "::endgroup::"
@@ -669,6 +676,7 @@ runs:
           fi
 
           # Build v3 request payload
+          session_title="${{ inputs.title }}"
           jq -n \
             --arg prompt "$decoded_prompt" \
             --arg advanced_mode "$advanced_mode" \
@@ -678,6 +686,7 @@ runs:
             --arg playbook "$playbook_id" \
             --arg child_playbook "$child_playbook_id" \
             --arg bypass "$bypass_approval" \
+            --arg title "$session_title" \
             --argjson structured_output_schema "$structured_output_schema_json" \
             '{
               "prompt": $prompt,
@@ -689,6 +698,7 @@ runs:
             | if $playbook != "" then . + {"playbook_id": $playbook} else . end
             | if $child_playbook != "" then . + {"child_playbook_id": $child_playbook} else . end
             | if $bypass == "true" then . + {"bypass_approval": true} else . end
+            | if $title != "" then . + {"title": $title} else . end
             | if $structured_output_schema != null then . + {"structured_output_schema": $structured_output_schema} else . end' > devin_request.json
 
         else

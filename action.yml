@@ -81,6 +81,17 @@ inputs:
   structured-output-schema:
     description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Supported on both v1 and v3 session creation. Ignored when using 'reuse-session'."
     required: false
+  playbook-source-repository:
+    description: "Repository containing playbook Markdown sources used to resolve frontmatter metadata such as structured_output_schema_file."
+    required: false
+    default: "airbytehq/ai-skills"
+  playbook-source-ref:
+    description: "Git ref in playbook-source-repository for resolving playbook metadata. Defaults to main. For dev playbooks, pass refs/pull/<PR>/head."
+    required: false
+    default: "main"
+  playbook-source-token:
+    description: "GitHub token used to read playbook-source-repository. Defaults to github-token."
+    required: false
 
 outputs:
   session-id:
@@ -113,6 +124,7 @@ runs:
       shell: bash
       env:
         DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
+        INPUT_PLAYBOOK_SOURCE_REF: ${{ inputs.playbook-source-ref }}
       run: |
         set -euo pipefail
 
@@ -146,6 +158,11 @@ runs:
             exit 1
             ;;
         esac
+
+        if [[ -n "$INPUT_PLAYBOOK_SOURCE_REF" && ! "$INPUT_PLAYBOOK_SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          echo "::error::Invalid playbook-source-ref '$INPUT_PLAYBOOK_SOURCE_REF'."
+          exit 1
+        fi
 
         # Validate v3 API inputs
         advanced_mode="${{ inputs.advanced-mode }}"
@@ -276,6 +293,94 @@ runs:
         fi
 
         echo "Input validation passed (effective API version: $effective_api_version)"
+
+    - name: Resolve playbook metadata
+      id: resolve-playbook-metadata
+      if: inputs.structured-output-schema == '' && inputs.playbook-macro != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PLAYBOOK_SOURCE_TOKEN: ${{ inputs.playbook-source-token || inputs.github-token }}
+        INPUT_PLAYBOOK_MACRO: ${{ inputs.playbook-macro }}
+        INPUT_PLAYBOOK_SOURCE_REPOSITORY: ${{ inputs.playbook-source-repository }}
+        INPUT_PLAYBOOK_SOURCE_REF: ${{ inputs.playbook-source-ref }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "$PLAYBOOK_SOURCE_TOKEN" ]]; then
+          echo "::notice::No GitHub token available for playbook metadata lookup."
+          exit 0
+        fi
+
+        export GH_TOKEN="$PLAYBOOK_SOURCE_TOKEN"
+
+        macro_name="${INPUT_PLAYBOOK_MACRO#!}"
+        macro_name="${macro_name%%__dev-*}"
+
+        if ! [[ "$macro_name" =~ ^[a-zA-Z0-9_]+$ ]]; then
+          echo "::warning::Skipping playbook metadata lookup for invalid macro name '$macro_name'."
+          exit 0
+        fi
+
+        playbook_path="devin/playbooks/${macro_name}.md"
+        playbook_body="$(gh api "repos/${INPUT_PLAYBOOK_SOURCE_REPOSITORY}/contents/${playbook_path}?ref=${INPUT_PLAYBOOK_SOURCE_REF}" --jq '.content' 2>/dev/null | base64 -d || true)"
+
+        if [[ -z "$playbook_body" ]]; then
+          echo "::notice::No playbook source found at ${INPUT_PLAYBOOK_SOURCE_REPOSITORY}:${INPUT_PLAYBOOK_SOURCE_REF}:${playbook_path}."
+          exit 0
+        fi
+
+        schema_file="$(PLAYBOOK_BODY="$playbook_body" python3 -c "import os, re; body = os.environ['PLAYBOOK_BODY']; match = re.match(r'^---\n(.*?)\n---\n', body, re.DOTALL); print(next((value.strip().strip(chr(34)+chr(39)) for line in match.group(1).splitlines() for key, sep, value in [line.partition(':')] if sep and key.strip() == 'structured_output_schema_file'), '') if match else '')")"
+
+        if [[ -z "$schema_file" ]]; then
+          echo "::notice::Playbook ${macro_name} does not declare structured_output_schema_file."
+          exit 0
+        fi
+
+        if [[ "$schema_file" = /* || "$schema_file" == *".."* || ! "$schema_file" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          echo "::error::Invalid structured_output_schema_file path '${schema_file}'."
+          exit 1
+        fi
+
+        schema_body="$(gh api "repos/${INPUT_PLAYBOOK_SOURCE_REPOSITORY}/contents/${schema_file}?ref=${INPUT_PLAYBOOK_SOURCE_REF}" --jq '.content' | base64 -d)"
+
+        {
+          echo "schema<<EOF"
+          printf '%s\n' "$schema_body"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Resolved structured output schema from ${INPUT_PLAYBOOK_SOURCE_REPOSITORY}:${INPUT_PLAYBOOK_SOURCE_REF}:${schema_file}."
+
+    - name: Validate resolved structured output schema
+      if: steps.resolve-playbook-metadata.outputs.schema != ''
+      shell: bash
+      env:
+        DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ steps.resolve-playbook-metadata.outputs.schema }}
+      run: |
+        set -euo pipefail
+
+        schema_json=""
+        if command -v yq >/dev/null 2>&1; then
+          schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | yq -o=json eval '.' - 2>/dev/null) || schema_json=""
+        fi
+        if [[ -z "$schema_json" ]] && command -v python3 >/dev/null 2>&1; then
+          schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | python3 -c 'import sys, json; import yaml; json.dump(yaml.safe_load(sys.stdin), sys.stdout)' 2>/dev/null) || schema_json=""
+        fi
+        if [[ -z "$schema_json" ]]; then
+          schema_json=$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA}" | jq -c '.' 2>/dev/null) || schema_json=""
+        fi
+        if [[ -z "$schema_json" ]]; then
+          echo "::error::Failed to parse resolved structured output schema as YAML or JSON."
+          exit 1
+        fi
+        if ! printf '%s' "$schema_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+          echo "::error::The resolved structured output schema must be a YAML or JSON object."
+          exit 1
+        fi
+
+        schema_json_compact=$(printf '%s' "$schema_json" | jq -c '.')
+        echo "DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON=${schema_json_compact}" >> "$GITHUB_ENV"
 
     - name: Build Devin prompt
       id: build-prompt

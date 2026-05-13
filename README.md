@@ -38,6 +38,9 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `child-playbook-id` | Playbook ID for child sessions (v3 API only). Required for `batch` and `improve` modes. | false | |
 | `bypass-approval` | If `true`, bypass approval for batch session creation (v3 batch mode only). Requires `UseDevinExpert` permission. | false | `false` |
 | `structured-output-schema` | JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Supported on both v1 and v3 session creation. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
+| `playbook-source-repository` | Repository containing playbook Markdown sources used to resolve frontmatter metadata such as `structured_output_schema_file`. | false | `airbytehq/ai-skills` |
+| `playbook-source-ref` | Git ref in `playbook-source-repository` for resolving playbook metadata. For dev playbooks, pass `refs/pull/<PR>/head`. | false | `main` |
+| `playbook-source-token` | GitHub token used to read `playbook-source-repository`. Defaults to `github-token`. | false | |
 
 ## Session Tagging
 
@@ -358,6 +361,32 @@ For longer schemas, store them in a `.yaml` (or `.json`) file and pass the conte
     prompt-file: .github/prompts/pr-review.md
     structured-output-schema: ${{ steps.load-schema.outputs.schema }}
 ```
+
+### Schema From Playbook Frontmatter
+
+When `structured-output-schema` is omitted and `playbook-macro` is set, the action attempts to resolve schema metadata from the playbook Markdown source. By default it reads from `airbytehq/ai-skills` on `main`.
+
+```md
+---
+structured_output_schema_file: devin/playbooks/schemas/issue_triage.yml
+---
+
+# Issue Triage
+```
+
+For dev playbooks, point `playbook-source-ref` at the ai-skills PR ref:
+
+```yaml
+- name: Run Dev Playbook
+  uses: aaronsteers/devin-action@v1
+  with:
+    devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    github-token: ${{ steps.get-app-token.outputs.token }}
+    playbook-macro: "!issue_triage__dev-237"
+    playbook-source-ref: refs/pull/237/head
+```
+
+If the playbook source repository is private, the token passed through `github-token` or `playbook-source-token` must be able to read it.
 
 ### Runner Requirements
 

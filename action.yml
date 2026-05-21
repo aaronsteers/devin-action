@@ -598,8 +598,13 @@ runs:
         fi
 
         # Determine effective API version
+        has_structured_output_schema=false
+        if [[ -n "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
+          has_structured_output_schema=true
+        fi
+
         if [[ "$api_version" == "auto" ]]; then
-          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$playbook_id" || -n "$child_playbook_id" || "$bypass_approval" == "true" || -n "$structured_output_required" ]]; then
+          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$playbook_id" || -n "$child_playbook_id" || "$bypass_approval" == "true" || -n "$structured_output_required" || "$has_structured_output_schema" == "true" ]]; then
             use_v3="true"
           else
             use_v3="false"
@@ -672,6 +677,9 @@ runs:
         # Use the normalized JSON persisted by the Validate inputs step.
         # This is already compact JSON and known to be a top-level object.
         structured_output_schema_json="${DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON:-null}"
+        if [[ -z "$structured_output_required" && "$structured_output_schema_json" != "null" ]]; then
+          structured_output_required="true"
+        fi
 
         if [[ "$use_v3" == "true" ]]; then
           # ===== V3 API payload =====

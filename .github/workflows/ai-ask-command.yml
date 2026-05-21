@@ -33,5 +33,6 @@ jobs:
           issue-number: ${{ github.event.inputs.issue-number }}
           playbook-macro: "!issue_ask"
           devin-token: ${{ secrets.DEVIN_TOKEN }}
+          org-id: ${{ vars.DEVIN_ORG_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           start-message: "💡 **Getting AI assistance...**"

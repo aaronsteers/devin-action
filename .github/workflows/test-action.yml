@@ -19,10 +19,23 @@ jobs:
         with:
           prompt-text: "This is a test of the Devin action"
           devin-token: "test-token-placeholder"
+          org-id: "org-test-placeholder"
+          dry-run: "true"
+
+      - name: Test Action fails fast with unsupported API version
+        id: test-unsupported-version
+        uses: ./
+        with:
+          prompt-text: "This should fail before calling the Devin API"
+          devin-token: "test-token-placeholder"
+          org-id: "org-test-placeholder"
+          api-version: "v1"
+          dry-run: "true"
         continue-on-error: true
 
       - name: Check test results
         run: |
-          echo "Test completed with exit code: ${{ steps.test-minimal.outcome }}"
-          # In a real test, we would validate the outputs
-          # For now, we just ensure the action doesn't crash on basic input validation
+          echo "Minimal dry-run outcome: ${{ steps.test-minimal.outcome }}"
+          echo "Unsupported version outcome: ${{ steps.test-unsupported-version.outcome }}"
+          test "${{ steps.test-minimal.outcome }}" = "success"
+          test "${{ steps.test-unsupported-version.outcome }}" = "failure"

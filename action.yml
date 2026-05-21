@@ -81,6 +81,9 @@ inputs:
   structured-output-schema:
     description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Supported on both v1 and v3 session creation. Ignored when using 'reuse-session'."
     required: false
+  structured-output-required:
+    description: "If 'true', require Devin to submit final structured output before each turn ends when using the v3 API. If 'false', structured output remains available but optional. Ignored for v1 session creation and when using 'reuse-session'."
+    required: false
 
 outputs:
   session-id:
@@ -155,6 +158,7 @@ runs:
         playbook_id="${{ inputs.playbook-id }}"
         child_playbook_id="${{ inputs.child-playbook-id }}"
         bypass_approval="${{ inputs.bypass-approval }}"
+        structured_output_required="${{ inputs.structured-output-required }}"
 
         # Determine effective advanced mode (session-links implies analyze)
         if [[ -z "$advanced_mode" && -n "$session_links" ]]; then
@@ -181,6 +185,9 @@ runs:
         fi
         if [[ "$bypass_approval" == "true" ]]; then
           v3_only_features+=("bypass-approval")
+        fi
+        if [[ -n "$structured_output_required" ]]; then
+          v3_only_features+=("structured-output-required")
         fi
 
         # Error if v1 is explicitly requested with v3-only features
@@ -236,6 +243,23 @@ runs:
         fi
 
         # bypass-approval is a v3 feature (no longer restricted to batch mode only)
+
+        if [[ -n "$structured_output_required" ]]; then
+          case "$structured_output_required" in
+            true|false)
+              ;;
+            *)
+              echo "::error::Invalid structured-output-required '$structured_output_required'. Must be either: true or false."
+              exit 1
+              ;;
+          esac
+          if [[ -z "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
+            echo "::warning::The 'structured-output-required' input was provided without 'structured-output-schema'. The v3 API flag will still be sent, but Devin will not have a schema to validate against."
+          fi
+          if [[ -n "${{ inputs.reuse-session }}" ]]; then
+            echo "::warning::The 'structured-output-required' input is only applied when creating a new v3 session; it will be ignored because 'reuse-session' is set."
+          fi
+        fi
 
         # v3 features are incompatible with reuse-session
         if [[ "$effective_api_version" == "v3" && -n "${{ inputs.reuse-session }}" ]]; then
@@ -415,6 +439,7 @@ runs:
         echo "playbook-id: $([[ -n "${{ inputs.playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "child-playbook-id: $([[ -n "${{ inputs.child-playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "bypass-approval: ${{ inputs.bypass-approval }}"
+        echo "structured-output-required: $([[ -n "${{ inputs.structured-output-required }}" ]] && echo 'SET (${{ inputs.structured-output-required }})' || echo 'NOT SET')"
         echo "api-version: ${{ inputs.api-version }}"
         echo "structured-output-schema: $([[ -n "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "::endgroup::"
@@ -565,6 +590,7 @@ runs:
         playbook_id="${{ inputs.playbook-id }}"
         child_playbook_id="${{ inputs.child-playbook-id }}"
         bypass_approval="${{ inputs.bypass-approval }}"
+        structured_output_required="${{ inputs.structured-output-required }}"
 
         # session-links without advanced-mode defaults to analyze
         if [[ -z "$advanced_mode" && -n "$session_links_input" ]]; then
@@ -572,8 +598,13 @@ runs:
         fi
 
         # Determine effective API version
+        has_structured_output_schema=false
+        if [[ -n "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
+          has_structured_output_schema=true
+        fi
+
         if [[ "$api_version" == "auto" ]]; then
-          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$playbook_id" || -n "$child_playbook_id" || "$bypass_approval" == "true" ]]; then
+          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$playbook_id" || -n "$child_playbook_id" || "$bypass_approval" == "true" || -n "$structured_output_required" || "$has_structured_output_schema" == "true" ]]; then
             use_v3="true"
           else
             use_v3="false"
@@ -646,6 +677,9 @@ runs:
         # Use the normalized JSON persisted by the Validate inputs step.
         # This is already compact JSON and known to be a top-level object.
         structured_output_schema_json="${DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON:-null}"
+        if [[ -z "$structured_output_required" && "$structured_output_schema_json" != "null" ]]; then
+          structured_output_required="true"
+        fi
 
         if [[ "$use_v3" == "true" ]]; then
           # ===== V3 API payload =====
@@ -678,6 +712,7 @@ runs:
             --arg playbook "$playbook_id" \
             --arg child_playbook "$child_playbook_id" \
             --arg bypass "$bypass_approval" \
+            --arg structured_output_required "$structured_output_required" \
             --argjson structured_output_schema "$structured_output_schema_json" \
             '{
               "prompt": $prompt,
@@ -689,6 +724,7 @@ runs:
             | if $playbook != "" then . + {"playbook_id": $playbook} else . end
             | if $child_playbook != "" then . + {"child_playbook_id": $child_playbook} else . end
             | if $bypass == "true" then . + {"bypass_approval": true} else . end
+            | if $structured_output_required != "" then . + {"structured_output_required": ($structured_output_required == "true")} else . end
             | if $structured_output_schema != null then . + {"structured_output_schema": $structured_output_schema} else . end' > devin_request.json
 
         else

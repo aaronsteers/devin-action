@@ -5,6 +5,23 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      run-live-tests:
+        description: "Create a real Devin v3 session using DEVIN_TOKEN and DEVIN_ORG_ID"
+        type: boolean
+        required: true
+        default: false
+      live-prompt-text:
+        description: "Prompt for the live Devin session"
+        type: string
+        required: false
+        default: "Live production smoke test for aaronsteers/devin-action. Confirm the session was created successfully. Do not modify repositories, create pull requests, or post external comments."
+      wait-for-stopped-status:
+        description: "Poll the live session until status_detail is non-working"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   test-action:
@@ -39,3 +56,51 @@ jobs:
           echo "Unsupported version outcome: ${{ steps.test-unsupported-version.outcome }}"
           test "${{ steps.test-minimal.outcome }}" = "success"
           test "${{ steps.test-unsupported-version.outcome }}" = "failure"
+
+  live-prod-smoke-test:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run-live-tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate live test configuration
+        env:
+          DEVIN_TOKEN: ${{ secrets.DEVIN_TOKEN }}
+          DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+        run: |
+          test -n "$DEVIN_TOKEN"
+          test -n "$DEVIN_ORG_ID"
+
+      - name: Create live Devin session
+        id: create-live-session
+        uses: ./
+        with:
+          prompt-text: ${{ inputs.live-prompt-text }}
+          devin-token: ${{ secrets.DEVIN_TOKEN }}
+          org-id: ${{ vars.DEVIN_ORG_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          tags: |
+            devin-action-live-prod-test
+            workflow-${{ github.run_id }}
+            ref-${{ github.ref_name }}
+          max-acu-limit: "1"
+          wait-for-stopped-status: ${{ inputs.wait-for-stopped-status }}
+          wait-minutes-max: "10"
+
+      - name: Check live session outputs
+        run: |
+          session_id='${{ steps.create-live-session.outputs.session-id }}'
+          session_url='${{ steps.create-live-session.outputs.session-url }}'
+          status='${{ steps.create-live-session.outputs.status }}'
+
+          test -n "$session_id"
+          test -n "$session_url"
+
+          {
+            echo "### Live production smoke test"
+            echo ""
+            echo "- Session ID: $session_id"
+            echo "- Session URL: $session_url"
+            echo "- Status: ${status:-not polled}"
+          } >> "$GITHUB_STEP_SUMMARY"

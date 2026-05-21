@@ -33,7 +33,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `api-version` | Devin API version. Only `v3` is supported; any other value fails fast. | false | `v3` |
 | `advanced-mode` | V3 API advanced mode. Option: `analyze`. Requires `org-id`. See [Advanced Mode](#advanced-mode-v3-api) below. | false | |
 | `session-links` | Session URLs or IDs to analyze (CSV or line-delimited). Required for `analyze` mode. When provided without `advanced-mode`, defaults to `analyze`. | false | |
-| `org-id` | Devin organization ID. Required for v3 session creation, session reuse, and polling. | false | |
+| `org-id` | Devin organization ID. Required for v3 session creation, session reuse, and polling. | true | |
 | `max-acu-limit` | Maximum ACU limit for the session. | false | |
 | `playbook-id` | Playbook ID to use for the session. | false | |
 | `child-playbook-id` | Playbook ID for child sessions. | false | |

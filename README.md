@@ -38,7 +38,7 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `child-playbook-id` | Playbook ID for child sessions (v3 API only). Required for `batch` and `improve` modes. | false | |
 | `bypass-approval` | If `true`, bypass approval for batch session creation (v3 batch mode only). Requires `UseDevinExpert` permission. | false | `false` |
 | `structured-output-schema` | JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Supported on both v1 and v3 session creation. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
-| `structured-output-required` | V3-only flag passed as `structured_output_required` on session creation. If `true`, Devin must submit final structured output before each turn ends. If `false`, structured output is available but optional. Ignored when using `reuse-session`. | false | |
+| `structured-output-required` | V3-only flag passed as `structured_output_required` on session creation. If omitted, the Devin API defaults to `true` when structured output is configured. If `false`, structured output is available but optional. Ignored when using `reuse-session`. | false | |
 
 ## Session Tagging
 
@@ -281,7 +281,7 @@ Use `max-acu-limit` to cap the compute budget for v3 sessions:
 
 Use `structured-output-schema` to request that Devin produce structured output matching a JSON Schema. The schema is passed through as the `structured_output_schema` field on the session creation request. This is supported on both the v1 and v3 session-creation endpoints; it is ignored when using `reuse-session`.
 
-Use `structured-output-required` to pass the v3 sessions create API flag `structured_output_required`. When `true` (the API default), Devin must call `provide_structured_output` with `is_final=true` before its turn ends. When `false`, the tool is available but optional and is not guaranteed to be called in a given turn. Providing this input routes `api-version: auto` to v3 and requires `org-id`.
+Use `structured-output-required` to pass the v3 sessions create API flag `structured_output_required`. When `true` (the API default), Devin must call `provide_structured_output` with `is_final=true` before its turn ends. When omitted, the action leaves the field unset and relies on that API default. When `false`, the tool is available but optional and is not guaranteed to be called in a given turn. Providing this input routes `api-version: auto` to v3 and requires `org-id`.
 
 The input accepts either YAML or JSON. YAML 1.2 is a strict superset of JSON, so existing JSON schemas are still valid. The input is validated up front: anything that doesn't parse to a top-level object fails the action before calling the API.
 

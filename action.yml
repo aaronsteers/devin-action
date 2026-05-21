@@ -24,8 +24,7 @@ inputs:
   devin-token:
     description: |
       Devin API Token (required for authentication).
-      For v1 API: Personal API Key (apk_user_*) or Service API Key (apk_*).
-      For v3 API: Service User credential with ManageOrgSessions permission (service users only; PATs are not supported for v3).
+      Requires a v3-compatible service user credential with ManageOrgSessions permission (service users only; PATs are not supported for v3).
     required: true
   github-token:
     description: "GitHub Token (required for posting comments and accessing repo context)"
@@ -38,14 +37,14 @@ inputs:
     description: "Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: gh-actions-trigger and playbook-{macro-name} if playbook-macro is provided. Cannot be used with reuse-session."
     required: false
   reuse-session:
-    description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input. When targeting a session created via the v3 API, also provide 'org-id' for org-scoped authentication."
+    description: "Existing Devin session ID or URL to inject a message into (optional). When provided, sends a message to an existing v3 session instead of creating a new one. Accepts either a session ID or a full URL (e.g., https://app.devin.ai/sessions/abc123). Mutually exclusive with 'tags' input. Requires 'org-id'."
     required: false
   dry-run:
     description: "If 'true', the action will simulate the process without making an actual API call to Devin"
     required: false
     default: "false"
   wait-for-stopped-status:
-    description: "If 'true', polls GET /v1/sessions/{session_id} until status_enum is any non-working state."
+    description: "If 'true', polls GET /v3/organizations/{org_id}/sessions/{devin_id} until status_detail is any non-working state."
     required: false
     default: "false"
   wait-minutes-max:
@@ -53,17 +52,17 @@ inputs:
     required: false
     default: "20"
   api-version:
-    description: "Devin API version to use. Options: 'auto' (default, selects v1 or v3 based on inputs), 'v1' (force v1 API), 'v3' (force v3 API). When 'auto', v3 is used if advanced-mode or session-links is provided; otherwise v1. Setting 'v1' with v3-only features (advanced-mode, session-links, max-acu-limit) will produce an error."
+    description: "Devin API version to use. Only 'v3' is supported; any other value fails fast."
     required: false
-    default: "auto"
+    default: "v3"
   advanced-mode:
-    description: "V3 API advanced mode (optional). Enables specialized session behaviors for automation workflows. Options: 'analyze' (analyze existing sessions via session-links), 'create' (create a new playbook), 'improve' (improve an existing playbook), 'batch' (start multiple sessions), 'manage' (manage knowledge). When set, uses the v3 API endpoint. Requires org-id."
+    description: "V3 API advanced mode (optional). Enables specialized session behaviors for automation workflows. Options: 'analyze' (analyze existing sessions via session-links). Requires org-id."
     required: false
   session-links:
     description: "Session URLs or IDs to provide as context (optional, supports CSV or line-delimited format). Required when advanced-mode is 'analyze'. When provided without advanced-mode, defaults to 'analyze' mode automatically."
     required: false
   org-id:
-    description: "Devin organization ID (required when using v3 API features such as advanced-mode or session-links). Also used with reuse-session to authenticate against sessions created via the v3 API. For org-scoped service users this may be auto-resolved, but providing it explicitly is recommended."
+    description: "Devin organization ID. Required for v3 session creation, session reuse, and polling."
     required: false
   max-acu-limit:
     description: "Maximum ACU limit for the session (optional, v3 API only). Caps the compute budget for the session."
@@ -72,17 +71,17 @@ inputs:
     description: "Playbook ID to use for the session (v3 API only). When set, the session will follow the referenced playbook's instructions. The playbook must already exist in the Devin API (synced via the ai-skills repo or created manually)."
     required: false
   child-playbook-id:
-    description: "Playbook ID for child sessions (v3 API only). Required when advanced-mode is 'batch' or 'improve'."
+    description: "Playbook ID for child sessions (v3 API only)."
     required: false
   bypass-approval:
     description: "If 'true', bypass the approval step for session creation (v3 API only). Requires UseDevinExpert permission."
     required: false
     default: "false"
   structured-output-schema:
-    description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Supported on both v1 and v3 session creation. Ignored when using 'reuse-session'."
+    description: "JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Must parse to a top-level object. Ignored when using 'reuse-session'."
     required: false
   structured-output-required:
-    description: "If 'true', require Devin to submit final structured output before each turn ends when using the v3 API. If 'false', structured output remains available but optional. Ignored for v1 session creation and when using 'reuse-session'."
+    description: "If 'true', require Devin to submit final structured output before each turn ends. If 'false', structured output remains available but optional. Ignored when using 'reuse-session'."
     required: false
 
 outputs:
@@ -102,7 +101,7 @@ outputs:
     description: "The GitHub Actions run URL"
     value: ${{ steps.vars.outputs.run-url }}
   status:
-    description: "The terminal status_enum value when polling completes (only set when wait-for-stopped-status is enabled)"
+    description: "The terminal status_detail value when polling completes (only set when wait-for-stopped-status is enabled)"
     value: ${{ steps.wait-for-status.outputs.status }}
   summary:
     description: "The last message from the session (only set when wait-for-stopped-status is enabled)"
@@ -141,23 +140,15 @@ runs:
 
         # Validate api-version input
         api_version="${{ inputs.api-version }}"
-        case "$api_version" in
-          auto|v1|v3)
-            ;;
-          *)
-            echo "::error::Invalid api-version '$api_version'. Must be one of: auto, v1, v3."
-            exit 1
-            ;;
-        esac
+        if [[ "$api_version" != "v3" ]]; then
+          echo "::error::Invalid api-version '$api_version'. Devin API v1 support has been removed; api-version must be 'v3'."
+          exit 1
+        fi
 
         # Validate v3 API inputs
         advanced_mode="${{ inputs.advanced-mode }}"
         session_links="${{ inputs.session-links }}"
         org_id="${{ inputs.org-id }}"
-        max_acu_limit="${{ inputs.max-acu-limit }}"
-        playbook_id="${{ inputs.playbook-id }}"
-        child_playbook_id="${{ inputs.child-playbook-id }}"
-        bypass_approval="${{ inputs.bypass-approval }}"
         structured_output_required="${{ inputs.structured-output-required }}"
 
         # Determine effective advanced mode (session-links implies analyze)
@@ -166,63 +157,20 @@ runs:
           echo "::notice::session-links provided without advanced-mode; defaulting to 'analyze' mode."
         fi
 
-        # Collect v3-only features for validation
-        v3_only_features=()
-        if [[ -n "$advanced_mode" ]]; then
-          v3_only_features+=("advanced-mode")
-        fi
-        if [[ -n "$session_links" ]]; then
-          v3_only_features+=("session-links")
-        fi
-        if [[ -n "$max_acu_limit" ]]; then
-          v3_only_features+=("max-acu-limit")
-        fi
-        if [[ -n "$playbook_id" ]]; then
-          v3_only_features+=("playbook-id")
-        fi
-        if [[ -n "$child_playbook_id" ]]; then
-          v3_only_features+=("child-playbook-id")
-        fi
-        if [[ "$bypass_approval" == "true" ]]; then
-          v3_only_features+=("bypass-approval")
-        fi
-        if [[ -n "$structured_output_required" ]]; then
-          v3_only_features+=("structured-output-required")
-        fi
-
-        # Error if v1 is explicitly requested with v3-only features
-        if [[ "$api_version" == "v1" && ${#v3_only_features[@]} -gt 0 ]]; then
-          features_list=$(IFS=', '; echo "${v3_only_features[*]}")
-          echo "::error::api-version is 'v1' but the following v3-only features were provided: ${features_list}. Either remove these inputs or set api-version to 'v3' or 'auto'."
-          exit 1
-        fi
-
-        # Resolve effective API version
-        if [[ "$api_version" == "auto" ]]; then
-          if [[ ${#v3_only_features[@]} -gt 0 ]]; then
-            effective_api_version="v3"
-            echo "::notice::api-version is 'auto'; resolved to 'v3' because v3 features are in use (${v3_only_features[*]})."
-          else
-            effective_api_version="v1"
-          fi
-        else
-          effective_api_version="$api_version"
-        fi
-
-        # If effective version is v3, org-id is required
-        if [[ "$effective_api_version" == "v3" && -z "$org_id" ]]; then
-          echo "::error::The 'org-id' input is required when using the v3 API (either explicitly or auto-resolved from v3-only features)."
+        # org-id is required for all v3 API calls
+        if [[ -z "$org_id" ]]; then
+          echo "::error::The 'org-id' input is required when using the v3 API."
           exit 1
         fi
 
         # Validate advanced-mode value
         if [[ -n "$advanced_mode" ]]; then
           case "$advanced_mode" in
-            analyze|create|improve|batch|manage)
+            analyze)
               echo "Advanced mode: $advanced_mode"
               ;;
             *)
-              echo "::error::Invalid advanced-mode '$advanced_mode'. Must be one of: analyze, create, improve, batch, manage."
+              echo "::error::Invalid advanced-mode '$advanced_mode'. Must be: analyze."
               exit 1
               ;;
           esac
@@ -233,16 +181,6 @@ runs:
           echo "::error::The 'session-links' input is required when advanced-mode is 'analyze'."
           exit 1
         fi
-
-        # batch and improve modes require child-playbook-id
-        if [[ "$advanced_mode" == "batch" || "$advanced_mode" == "improve" ]]; then
-          if [[ -z "$child_playbook_id" ]]; then
-            echo "::error::The 'child-playbook-id' input is required when advanced-mode is '$advanced_mode'."
-            exit 1
-          fi
-        fi
-
-        # bypass-approval is a v3 feature (no longer restricted to batch mode only)
 
         if [[ -n "$structured_output_required" ]]; then
           case "$structured_output_required" in
@@ -259,12 +197,6 @@ runs:
           if [[ -n "${{ inputs.reuse-session }}" ]]; then
             echo "::warning::The 'structured-output-required' input is only applied when creating a new v3 session; it will be ignored because 'reuse-session' is set."
           fi
-        fi
-
-        # v3 features are incompatible with reuse-session
-        if [[ "$effective_api_version" == "v3" && -n "${{ inputs.reuse-session }}" ]]; then
-          echo "::error::The v3 API features and 'reuse-session' are mutually exclusive. The v3 API creates a new session."
-          exit 1
         fi
 
         # Validate structured-output-schema is a YAML or JSON object (if provided).
@@ -299,7 +231,7 @@ runs:
           fi
         fi
 
-        echo "Input validation passed (effective API version: $effective_api_version)"
+        echo "Input validation passed (API version: v3)"
 
     - name: Build Devin prompt
       id: build-prompt
@@ -472,11 +404,7 @@ runs:
           session_url="https://app.devin.ai/sessions/${session_id}"
           echo "Final session ID: $session_id"
           echo "Final session URL: $session_url"
-          if [[ -n "${{ inputs.org-id }}" ]]; then
-            echo "API endpoint: POST /v3/organizations/{org_id}/sessions/devin-${session_id}/messages (org-scoped)"
-          else
-            echo "API endpoint: POST /v1/sessions/${session_id}/message"
-          fi
+          echo "API endpoint: POST /v3/organizations/{org_id}/sessions/devin-${session_id}/messages"
           echo "::endgroup::"
           
           # Output resolved values
@@ -529,17 +457,9 @@ runs:
           exit 0
         fi
 
-        # Select API endpoint based on whether org-id is provided
-        if [[ -n "${DEVIN_ORG_ID}" ]]; then
-          # Use v3 message endpoint for org-scoped sessions (e.g. sessions created via v3 API)
-          devin_id="devin-${session_id}"
-          api_url="https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions/${devin_id}/messages"
-          echo "Using v3 message endpoint (org-scoped): POST /v3/organizations/{org_id}/sessions/${devin_id}/messages"
-        else
-          # Use v1 message endpoint for personal sessions
-          api_url="https://api.devin.ai/v1/sessions/${session_id}/message"
-          echo "Using v1 message endpoint: POST /v1/sessions/${session_id}/message"
-        fi
+        devin_id="devin-${session_id}"
+        api_url="https://api.devin.ai/v3/organizations/${DEVIN_ORG_ID}/sessions/${devin_id}/messages"
+        echo "Using v3 message endpoint: POST /v3/organizations/{org_id}/sessions/${devin_id}/messages"
 
         # Make API call to send message to existing session
         response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
@@ -581,8 +501,6 @@ runs:
       run: |
         set -euo pipefail
 
-        # Resolve API version (mirrors validation logic)
-        api_version="${{ inputs.api-version }}"
         advanced_mode="${{ inputs.advanced-mode }}"
         session_links_input="${{ inputs.session-links }}"
         org_id="${{ inputs.org-id }}"
@@ -597,36 +515,12 @@ runs:
           advanced_mode="analyze"
         fi
 
-        # Determine effective API version
-        has_structured_output_schema=false
-        if [[ -n "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
-          has_structured_output_schema=true
-        fi
+        api_endpoint="https://api.devin.ai/v3/organizations/${org_id}/sessions"
 
-        if [[ "$api_version" == "auto" ]]; then
-          if [[ -n "$advanced_mode" || -n "$session_links_input" || -n "$max_acu_limit" || -n "$playbook_id" || -n "$child_playbook_id" || "$bypass_approval" == "true" || -n "$structured_output_required" || "$has_structured_output_schema" == "true" ]]; then
-            use_v3="true"
-          else
-            use_v3="false"
-          fi
-        elif [[ "$api_version" == "v3" ]]; then
-          use_v3="true"
-        else
-          use_v3="false"
-        fi
-
-        if [[ "$use_v3" == "true" ]]; then
-          api_endpoint="https://api.devin.ai/v3/organizations/${org_id}/sessions"
-
-          echo "::group::🆕 New Session Configuration (v3 API)"
-          echo "API endpoint: POST /v3/organizations/{org_id}/sessions"
-          echo "Advanced mode: $advanced_mode"
-          echo "Organization ID: $org_id"
-        else
-          api_endpoint="https://api.devin.ai/v1/sessions"
-          echo "::group::🆕 New Session Configuration (v1 API)"
-          echo "API endpoint: POST /v1/sessions"
-        fi
+        echo "::group::🆕 New Session Configuration (v3 API)"
+        echo "API endpoint: POST /v3/organizations/{org_id}/sessions"
+        echo "Advanced mode: $advanced_mode"
+        echo "Organization ID: $org_id"
         echo "Repository: ${{ github.repository }}"
         echo "Branch: ${{ github.ref_name }}"
         echo "::endgroup::"
@@ -681,86 +575,48 @@ runs:
           structured_output_required="true"
         fi
 
-        if [[ "$use_v3" == "true" ]]; then
-          # ===== V3 API payload =====
-
-          # Parse session-links (supports CSV and line-delimited)
-          session_links_json="null"
-          if [[ -n "$session_links_input" ]]; then
-            session_links_arr=()
-            while IFS= read -r line; do
-              if [[ -n "$line" ]]; then
-                IFS=',' read -ra link_array <<< "$line"
-                for link in "${link_array[@]}"; do
-                  trimmed_link=$(echo "$link" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                  if [[ -n "$trimmed_link" ]]; then
-                    session_links_arr+=("$trimmed_link")
-                  fi
-                done
-              fi
-            done <<< "$session_links_input"
-            session_links_json=$(printf '%s\n' "${session_links_arr[@]}" | jq -R . | jq -s .)
-          fi
-
-          # Build v3 request payload
-          jq -n \
-            --arg prompt "$decoded_prompt" \
-            --arg advanced_mode "$advanced_mode" \
-            --argjson tags "$tags_array" \
-            --argjson session_links "$session_links_json" \
-            --arg max_acu "$max_acu_limit" \
-            --arg playbook "$playbook_id" \
-            --arg child_playbook "$child_playbook_id" \
-            --arg bypass "$bypass_approval" \
-            --arg structured_output_required "$structured_output_required" \
-            --argjson structured_output_schema "$structured_output_schema_json" \
-            '{
-              "prompt": $prompt,
-              "tags": $tags
-            }
-            | if $advanced_mode != "" then . + {"advanced_mode": $advanced_mode} else . end
-            | if $session_links != null then . + {"session_links": $session_links} else . end
-            | if $max_acu != "" then . + {"max_acu_limit": ($max_acu | tonumber)} else . end
-            | if $playbook != "" then . + {"playbook_id": $playbook} else . end
-            | if $child_playbook != "" then . + {"child_playbook_id": $child_playbook} else . end
-            | if $bypass == "true" then . + {"bypass_approval": true} else . end
-            | if $structured_output_required != "" then . + {"structured_output_required": ($structured_output_required == "true")} else . end
-            | if $structured_output_schema != null then . + {"structured_output_schema": $structured_output_schema} else . end' > devin_request.json
-
-        else
-          # ===== V1 API payload =====
-
-          # Build metadata object with optional fields
-          metadata_json=$(jq -n \
-            --arg run_id "${{ github.run_id }}" \
-            --arg repository "${{ github.repository }}" \
-            --arg comment_id "${{ inputs.comment-id }}" \
-            --arg issue_number "${{ inputs.issue-number }}" \
-            '{
-              "github_run_id": $run_id,
-              "github_repository": $repository,
-              "triggered_by": "github_action"
-            }
-            | if $comment_id != "" then . + {"github_comment_id": $comment_id, "github_comment_url": "https://github.com/\($repository)/issues/comments/\($comment_id)"} else . end
-            | if $issue_number != "" then . + {"github_issue_number": $issue_number, "github_issue_url": "https://github.com/\($repository)/issues/\($issue_number)"} else . end')
-
-          # Prepare the v1 API request payload
-          jq -n \
-            --arg prompt "$decoded_prompt" \
-            --arg repo_url "https://github.com/${{ github.repository }}" \
-            --arg branch "${{ github.ref_name }}" \
-            --argjson tags "$tags_array" \
-            --argjson metadata "$metadata_json" \
-            --argjson structured_output_schema "$structured_output_schema_json" \
-            '{
-              "prompt": $prompt,
-              "repository_url": $repo_url,
-              "branch": $branch,
-              "tags": $tags,
-              "metadata": $metadata
-            }
-            | if $structured_output_schema != null then . + {"structured_output_schema": $structured_output_schema} else . end' > devin_request.json
+        # Parse session-links (supports CSV and line-delimited)
+        session_links_json="null"
+        if [[ -n "$session_links_input" ]]; then
+          session_links_arr=()
+          while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+              IFS=',' read -ra link_array <<< "$line"
+              for link in "${link_array[@]}"; do
+                trimmed_link=$(echo "$link" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                if [[ -n "$trimmed_link" ]]; then
+                  session_links_arr+=("$trimmed_link")
+                fi
+              done
+            fi
+          done <<< "$session_links_input"
+          session_links_json=$(printf '%s\n' "${session_links_arr[@]}" | jq -R . | jq -s .)
         fi
+
+        # Build v3 request payload
+        jq -n \
+          --arg prompt "$decoded_prompt" \
+          --arg advanced_mode "$advanced_mode" \
+          --argjson tags "$tags_array" \
+          --argjson session_links "$session_links_json" \
+          --arg max_acu "$max_acu_limit" \
+          --arg playbook "$playbook_id" \
+          --arg child_playbook "$child_playbook_id" \
+          --arg bypass "$bypass_approval" \
+          --arg structured_output_required "$structured_output_required" \
+          --argjson structured_output_schema "$structured_output_schema_json" \
+          '{
+            "prompt": $prompt,
+            "tags": $tags
+          }
+          | if $advanced_mode != "" then . + {"advanced_mode": $advanced_mode} else . end
+          | if $session_links != null then . + {"session_links": $session_links} else . end
+          | if $max_acu != "" then . + {"max_acu_limit": ($max_acu | tonumber)} else . end
+          | if $playbook != "" then . + {"playbook_id": $playbook} else . end
+          | if $child_playbook != "" then . + {"child_playbook_id": $child_playbook} else . end
+          | if $bypass == "true" then . + {"bypass_approval": true} else . end
+          | if $structured_output_required != "" then . + {"structured_output_required": ($structured_output_required == "true")} else . end
+          | if $structured_output_schema != null then . + {"structured_output_schema": $structured_output_schema} else . end' > devin_request.json
 
         echo "::group::📤 Devin API Request"
         cat devin_request.json | jq
@@ -787,9 +643,9 @@ runs:
         echo "$response" | jq
         echo "::endgroup::"
 
-        # Extract session information (v1 uses session_url, v3 uses url)
-        session_id=$(echo "$response" | jq -r '.session_id // .id // empty')
-        session_url=$(echo "$response" | jq -r '.session_url // .url // empty')
+        # Extract session information
+        session_id=$(echo "$response" | jq -r '.session_id // empty')
+        session_url=$(echo "$response" | jq -r '.url // empty')
 
         if [[ -z "$session_id" ]]; then
           echo "Failed to extract session ID from Devin API response"
@@ -821,6 +677,9 @@ runs:
           exit 1
         fi
 
+        org_id="${{ inputs.org-id }}"
+        devin_id="devin-${session_id}"
+
         # Internal defaults
         poll_interval=30
         max_api_errors=3
@@ -836,7 +695,8 @@ runs:
 
         echo "::group::⏳ Polling Configuration"
         echo "Session ID: $session_id"
-        echo "Waiting for any non-working status"
+        echo "API endpoint: GET /v3/organizations/{org_id}/sessions/${devin_id}"
+        echo "Waiting for any non-working status_detail"
         echo "Poll interval: ${poll_interval}s"
         echo "Max polls: $max_polls"
         echo "Max consecutive API errors: $max_api_errors"
@@ -854,7 +714,7 @@ runs:
           response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X GET \
             -H "Authorization: Bearer ${DEVIN_TOKEN}" \
             -H "Content-Type: application/json" \
-            "https://api.devin.ai/v1/sessions/${session_id}" 2>&1) || true
+            "https://api.devin.ai/v3/organizations/${org_id}/sessions/${devin_id}" 2>&1) || true
 
           http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d':' -f2)
           response_body=$(echo "$response" | sed '/HTTP_STATUS:/d')
@@ -875,8 +735,8 @@ runs:
           # Reset consecutive error counter on success
           consecutive_errors=0
 
-          # Extract status_enum from response, treating JSON parse failures as retryable errors
-          if ! current_status=$(echo "$response_body" | jq -r '.status_enum // empty' 2>/dev/null); then
+          # Extract status_detail from response, treating JSON parse failures as retryable errors
+          if ! current_status=$(echo "$response_body" | jq -r '.status_detail // empty' 2>/dev/null); then
             consecutive_errors=$((consecutive_errors + 1))
             echo "::warning::Failed to parse JSON response (attempt $consecutive_errors/$max_api_errors)."
             if [[ $consecutive_errors -ge $max_api_errors ]]; then
@@ -886,9 +746,9 @@ runs:
             sleep "$poll_interval"
             continue
           fi
-          echo "  Current status_enum: $current_status"
+          echo "  Current status_detail: $current_status"
 
-          # Any non-working status means the session has stopped
+          # Any non-working status_detail means the session has stopped
           if [[ "$current_status" != "working" && -n "$current_status" ]]; then
             echo "Session reached non-working status: $current_status"
 

@@ -27,18 +27,19 @@ A reusable GitHub action which calls out to Devin.ai, creating a new Devin sessi
 | `github-token` | GitHub Token (required for posting comments and accessing repo context)    | false    |          |
 | `start-message`| Custom message for the start comment                                       | false    | 🤖 **Starting Devin AI session...** |
 | `tags`         | Additional tags to apply to the Devin session (supports CSV or line-delimited format). Automatic tags are always added: `gh-actions-trigger` and `playbook-{macro-name}` if playbook-macro is provided. Cannot be used with `reuse-session`. | false    |          |
-| `reuse-session`| Existing Devin session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Mutually exclusive with `tags`. | false    |          |
-| `wait-for-stopped-status` | If `true`, polls until `status_enum` is any non-`working` state. | false | `false` |
+| `reuse-session`| Existing Devin v3 session ID or URL to inject a message into. Accepts either a session ID or a full URL (e.g., `https://app.devin.ai/sessions/abc123`). When provided, sends a message to an existing session instead of creating a new one. Requires `org-id` and is mutually exclusive with `tags`. | false    |          |
+| `wait-for-stopped-status` | If `true`, polls until `status_detail` is any non-`working` state. | false | `false` |
 | `wait-minutes-max` | Maximum minutes to poll before timing out (only used when `wait-for-stopped-status` is enabled) | false | `20` |
-| `api-version` | Devin API version: `auto` (default), `v1`, or `v3`. When `auto`, resolves to v3 if v3-only features are used; otherwise v1. Setting `v1` with v3-only features errors. | false | `auto` |
-| `advanced-mode` | V3 API advanced mode. Options: `analyze`, `create`, `improve`, `batch`, `manage`. Requires `org-id`. See [Advanced Mode](#advanced-mode-v3-api) below. | false | |
+| `api-version` | Devin API version. Only `v3` is supported; any other value fails fast. | false | `v3` |
+| `advanced-mode` | V3 API advanced mode. Option: `analyze`. Requires `org-id`. See [Advanced Mode](#advanced-mode-v3-api) below. | false | |
 | `session-links` | Session URLs or IDs to analyze (CSV or line-delimited). Required for `analyze` mode. When provided without `advanced-mode`, defaults to `analyze`. | false | |
-| `org-id` | Devin organization ID. Required when using v3 API features (`advanced-mode` or `session-links`). | false | |
-| `max-acu-limit` | Maximum ACU limit for the session (v3 API only). | false | |
-| `child-playbook-id` | Playbook ID for child sessions (v3 API only). Required for `batch` and `improve` modes. | false | |
-| `bypass-approval` | If `true`, bypass approval for batch session creation (v3 batch mode only). Requires `UseDevinExpert` permission. | false | `false` |
-| `structured-output-schema` | JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). When provided, `api-version: auto` resolves to v3 and `structured_output_required` defaults to `true`. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
-| `structured-output-required` | V3-only flag passed as `structured_output_required` on session creation. Defaults to `true` when `structured-output-schema` is provided. Set to `false` to make structured output available but optional. Ignored when using `reuse-session`. | false | |
+| `org-id` | Devin organization ID. Required for v3 session creation, session reuse, and polling. | false | |
+| `max-acu-limit` | Maximum ACU limit for the session. | false | |
+| `playbook-id` | Playbook ID to use for the session. | false | |
+| `child-playbook-id` | Playbook ID for child sessions. | false | |
+| `bypass-approval` | If `true`, bypass approval for session creation. Requires `UseDevinExpert` permission. | false | `false` |
+| `structured-output-schema` | JSON Schema describing the structured output Devin should produce. Accepts YAML or JSON (YAML 1.2 is a superset of JSON, so plain JSON also works). Defaults `structured_output_required` to `true`. Ignored when using `reuse-session`. See [Structured Output](#structured-output) below. | false | |
+| `structured-output-required` | Flag passed as `structured_output_required` on session creation. Defaults to `true` when `structured-output-schema` is provided. Set to `false` to make structured output available but optional. Ignored when using `reuse-session`. | false | |
 
 ## Session Tagging
 
@@ -87,6 +88,7 @@ tags: |
   with:
     prompt-text: "Please review this code and suggest improvements"
     devin-token: ${{ secrets.DEVIN_TOKEN }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
     github-token: ${{ secrets.GITHUB_TOKEN }}
     tags: 'code-review,improvement'
 ```
@@ -102,6 +104,7 @@ This action is designed to work with slash commands in issue and PR comments. Th
     comment-id: ${{ github.event.comment.id }}
     issue-number: ${{ github.event.issue.number }}
     devin-token: ${{ secrets.DEVIN_TOKEN }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -115,6 +118,7 @@ This action is designed to work with slash commands in issue and PR comments. Th
     issue-number: ${{ github.event.issue.number }}
     prompt-text: "Additional context about the specific failure"
     devin-token: ${{ secrets.DEVIN_TOKEN }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
     github-token: ${{ secrets.GITHUB_TOKEN }}
     tags: |
       ci-failure
@@ -139,6 +143,7 @@ You can provide either a session ID or a full session URL:
       New task triggered at ${{ github.event.repository.updated_at }}
       Please process the following scope: all certified connectors
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
 
 # Using a session URL (session ID is automatically extracted)
 - name: Send Message to Existing Devin Session
@@ -149,6 +154,7 @@ You can provide either a session ID or a full session URL:
       New task triggered at ${{ github.event.repository.updated_at }}
       Please process the following scope: all certified connectors
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
 ```
 
 **Note:** The `reuse-session` input is mutually exclusive with `tags`. When injecting a message into an existing session, tags cannot be specified since they are only applicable when creating new sessions.
@@ -164,6 +170,7 @@ Use `wait-for-stopped-status` to poll the Devin session until it reaches any non
   id: devin
   with:
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
     prompt-text: "Analyze commits and write a summary..."
     wait-for-stopped-status: true
 ```
@@ -175,6 +182,7 @@ Use `wait-for-stopped-status` to poll the Devin session until it reaches any non
   id: create
   with:
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
     prompt-text: "Do something..."
 
 # ... other steps ...
@@ -183,6 +191,7 @@ Use `wait-for-stopped-status` to poll the Devin session until it reaches any non
   id: wait
   with:
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+    org-id: ${{ vars.DEVIN_ORG_ID }}
     reuse-session: ${{ steps.create.outputs.session-id }}
     wait-for-stopped-status: true
 ```
@@ -191,10 +200,10 @@ When polling completes, the following additional outputs are available:
 
 | Output | Description |
 |--------|-------------|
-| `status` | The terminal `status_enum` value when polling completes |
+| `status` | The terminal `status_detail` value when polling completes |
 | `summary` | The last message from the session |
 
-The action waits for any `status_enum` value other than `working`. See the [Devin API docs](https://docs.devin.ai/api-reference/v1/sessions/retrieve-details-about-an-existing-session) for the full list of possible status values.
+The action waits for any `status_detail` value other than `working`. See the [Devin API docs](https://docs.devin.ai/api-reference/v3/sessions/get-organizations-session) for the full list of possible status values.
 
 ## Advanced Mode (v3 API)
 
@@ -202,23 +211,7 @@ The action supports the Devin v3 API's advanced mode, which enables specialized 
 
 ### API Version Selection
 
-The `api-version` input controls which Devin API endpoint is used:
-
-- **`auto`** (default): Automatically selects v3 when v3-only features (`advanced-mode`, `session-links`, `max-acu-limit`) are provided; otherwise uses v1.
-- **`v1`**: Forces the v1 API. Will error if any v3-only features are also provided.
-- **`v3`**: Forces the v3 API. Requires `org-id`.
-
-When `advanced-mode` or `session-links` is provided, the action automatically uses the v3 API endpoint (equivalent to `api-version: auto` behavior).
-
-### Available Modes
-
-| Mode | Description | Required Parameters |
-|------|-------------|---------------------|
-| `analyze` | Analyze existing Devin sessions to extract insights | `session-links` |
-| `create` | Create a new playbook based on session analysis | None (optional: `session-links`) |
-| `improve` | Improve an existing playbook based on feedback | None |
-| `batch` | Start multiple Devin sessions for a list of tasks | None |
-| `manage` | Manage knowledge | None |
+The action only supports the Devin v3 API. The `api-version` input defaults to `v3`; setting it to anything else fails before any Devin API call is made. All create, message, and polling calls require `org-id`.
 
 ### Prerequisites
 
@@ -237,7 +230,7 @@ This is particularly useful for automated triage workflows where one Devin sessi
   uses: aaronsteers/devin-action@v1
   with:
     prompt-text: "Triage the linked session and identify the root cause of the reported issue."
-    devin-token: ${{ secrets.DEVIN_V3_TOKEN }}
+    devin-token: ${{ secrets.DEVIN_TOKEN }}
     github-token: ${{ secrets.GITHUB_TOKEN }}
     org-id: ${{ secrets.DEVIN_ORG_ID }}
     advanced-mode: analyze
@@ -256,7 +249,7 @@ When `session-links` is provided without `advanced-mode`, the action automatical
   uses: aaronsteers/devin-action@v1
   with:
     prompt-text: "Review this session and summarize what happened."
-    devin-token: ${{ secrets.DEVIN_V3_TOKEN }}
+    devin-token: ${{ secrets.DEVIN_TOKEN }}
     org-id: ${{ secrets.DEVIN_ORG_ID }}
     session-links: 'https://app.devin.ai/sessions/abc123'
 ```
@@ -270,7 +263,7 @@ Use `max-acu-limit` to cap the compute budget for v3 sessions:
   uses: aaronsteers/devin-action@v1
   with:
     prompt-text: "Quick analysis of this session."
-    devin-token: ${{ secrets.DEVIN_V3_TOKEN }}
+    devin-token: ${{ secrets.DEVIN_TOKEN }}
     org-id: ${{ secrets.DEVIN_ORG_ID }}
     advanced-mode: analyze
     session-links: 'https://app.devin.ai/sessions/abc123'
@@ -281,7 +274,7 @@ Use `max-acu-limit` to cap the compute budget for v3 sessions:
 
 Use `structured-output-schema` to request that Devin produce structured output matching a JSON Schema. The schema is passed through as the `structured_output_schema` field on the v3 session creation request; it is ignored when using `reuse-session`.
 
-When `structured-output-schema` is provided, `api-version: auto` resolves to v3 and the action defaults `structured_output_required` to `true`. This means Devin must call `provide_structured_output` with `is_final=true` before its turn ends. Set `structured-output-required: "false"` to make the tool available but optional; in that mode, it is not guaranteed to be called in a given turn.
+When `structured-output-schema` is provided, the action defaults `structured_output_required` to `true`. This means Devin must call `provide_structured_output` with `is_final=true` before its turn ends. Set `structured-output-required: "false"` to make the tool available but optional; in that mode, it is not guaranteed to be called in a given turn.
 
 The input accepts either YAML or JSON. YAML 1.2 is a strict superset of JSON, so existing JSON schemas are still valid. The input is validated up front: anything that doesn't parse to a top-level object fails the action before calling the API.
 
@@ -435,6 +428,7 @@ jobs:
           issue-number: ${{ github.event.client_payload.slash_command.args.named.issue || inputs.issue-number }}
           playbook-macro: '!issue_help'
           devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
+          org-id: ${{ vars.DEVIN_ORG_ID }}
           github-token: ${{ secrets.MY_COMMENTS_PAT }}
           start-message: '🤖 **AI Help session starting...**'
 ```

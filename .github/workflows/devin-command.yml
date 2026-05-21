@@ -43,4 +43,5 @@ jobs:
           playbook-macro: ${{ github.event.inputs.playbook-macro }}
           prompt-text: ${{ github.event.inputs.prompt-text }}
           devin-token: ${{ secrets.DEVIN_TOKEN }}
+          org-id: ${{ vars.DEVIN_ORG_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

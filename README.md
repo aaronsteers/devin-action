@@ -202,6 +202,7 @@ When polling completes, the following additional outputs are available:
 |--------|-------------|
 | `status` | The terminal `status_detail` value when polling completes |
 | `summary` | The last message from the session |
+| `structured-output` | The session `structured_output` as compact JSON, when present |
 
 The action waits for any `status_detail` value other than `working`. See the [Devin API docs](https://docs.devin.ai/api-reference/v3/sessions/get-organizations-session) for the full list of possible status values.
 
@@ -278,7 +279,7 @@ When `structured-output-schema` is provided, the action defaults `structured_out
 
 The input accepts either YAML or JSON. YAML 1.2 is a strict superset of JSON, so existing JSON schemas are still valid. The input is validated up front: anything that doesn't parse to a top-level object fails the action before calling the API.
 
-Once the session is running, the schema tells Devin what shape its "notepad" should take. Clients can then poll the session and read the latest structured output. See the [Devin structured output docs](https://docs.devin.ai/api-reference/structured-output) for more details.
+Once the session is running, the schema tells Devin what shape its "notepad" should take. If `wait-for-stopped-status` is also `true`, the action emits the session's final `structured_output` as the `structured-output` action output when polling completes. See the [Devin structured output docs](https://docs.devin.ai/api-reference/structured-output) for more details.
 
 ### Inline Schema (YAML)
 
@@ -286,6 +287,7 @@ YAML is usually easier to read inside a workflow since you can skip the quotes a
 
 ```yaml
 - name: Run Devin with Structured Output
+  id: devin
   uses: aaronsteers/devin-action@v1
   with:
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}
@@ -311,6 +313,15 @@ YAML is usually easier to read inside a workflow since you can skip the quotes a
           items: { type: string }
         approved:
           type: boolean
+    wait-for-stopped-status: true
+```
+
+The structured output can then be consumed by later workflow steps:
+
+```yaml
+- name: Use structured output
+  run: |
+    echo '${{ steps.devin.outputs.structured-output }}' | jq .
 ```
 
 ### Inline Schema (JSON)

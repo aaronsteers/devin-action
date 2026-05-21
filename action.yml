@@ -106,6 +106,9 @@ outputs:
   summary:
     description: "The last message from the session (only set when wait-for-stopped-status is enabled)"
     value: ${{ steps.wait-for-status.outputs.summary }}
+  structured-output:
+    description: "The session structured_output as compact JSON (only set when wait-for-stopped-status is enabled and the session has structured output)"
+    value: ${{ steps.wait-for-status.outputs.structured-output }}
 
 runs:
   using: "composite"
@@ -785,6 +788,16 @@ runs:
             printf '%s' "$last_message" >> $GITHUB_OUTPUT
             echo >> $GITHUB_OUTPUT
             echo "$summary_delim" >> $GITHUB_OUTPUT
+
+            # Output: structured-output (compact JSON)
+            if echo "$response_body" | jq -e 'has("structured_output") and .structured_output != null' >/dev/null; then
+              structured_output=$(echo "$response_body" | jq -c '.structured_output')
+              structured_output_delim="DEVIN_STRUCTURED_OUTPUT_EOF_${RANDOM}_$(date +%s)"
+              echo "structured-output<<$structured_output_delim" >> $GITHUB_OUTPUT
+              printf '%s' "$structured_output" >> $GITHUB_OUTPUT
+              echo >> $GITHUB_OUTPUT
+              echo "$structured_output_delim" >> $GITHUB_OUTPUT
+            fi
 
             exit 0
           fi

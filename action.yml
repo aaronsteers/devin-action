@@ -790,8 +790,8 @@ runs:
             echo "$summary_delim" >> $GITHUB_OUTPUT
 
             # Output: structured-output (compact JSON)
-            structured_output=$(echo "$response_body" | jq -c '.structured_output // empty')
-            if [[ -n "$structured_output" ]]; then
+            if echo "$response_body" | jq -e 'has("structured_output") and .structured_output != null' >/dev/null; then
+              structured_output=$(echo "$response_body" | jq -c '.structured_output')
               structured_output_delim="DEVIN_STRUCTURED_OUTPUT_EOF_${RANDOM}_$(date +%s)"
               echo "structured-output<<$structured_output_delim" >> $GITHUB_OUTPUT
               printf '%s' "$structured_output" >> $GITHUB_OUTPUT

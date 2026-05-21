@@ -287,6 +287,7 @@ YAML is usually easier to read inside a workflow since you can skip the quotes a
 
 ```yaml
 - name: Run Devin with Structured Output
+  id: devin
   uses: aaronsteers/devin-action@v1
   with:
     devin-token: ${{ secrets.DEVIN_AI_API_KEY }}

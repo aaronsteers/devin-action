@@ -118,6 +118,8 @@ runs:
       shell: bash
       env:
         DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
+        PROMPT_TEXT: ${{ inputs.prompt-text }}
+        PROMPT_FILE: ${{ inputs.prompt-file }}
       run: |
         set -euo pipefail
 
@@ -128,15 +130,15 @@ runs:
         fi
 
         # Check mutual exclusivity: prompt-text and prompt-file
-        if [[ -n "${{ inputs.prompt-text }}" && -n "${{ inputs.prompt-file }}" ]]; then
+        if [[ -n "$PROMPT_TEXT" && -n "$PROMPT_FILE" ]]; then
           echo "::error::The 'prompt-text' and 'prompt-file' inputs are mutually exclusive. Use one or the other, not both."
           exit 1
         fi
 
         # Validate prompt-file exists if provided
-        if [[ -n "${{ inputs.prompt-file }}" ]]; then
-          if [[ ! -f "${{ inputs.prompt-file }}" ]]; then
-            echo "::error::The prompt-file '${{ inputs.prompt-file }}' does not exist."
+        if [[ -n "$PROMPT_FILE" ]]; then
+          if [[ ! -f "$PROMPT_FILE" ]]; then
+            echo "::error::The prompt-file '$PROMPT_FILE' does not exist."
             exit 1
           fi
         fi
@@ -242,6 +244,9 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        PROMPT_TEXT: ${{ inputs.prompt-text }}
+        PROMPT_FILE: ${{ inputs.prompt-file }}
+        PLAYBOOK_MACRO: ${{ inputs.playbook-macro }}
       run: |
         set -euo pipefail
 
@@ -277,23 +282,23 @@ runs:
         fi
 
         # Add playbook macro reference if playbook-macro is provided
-        if [[ -n "${{ inputs.playbook-macro }}" ]]; then
-          prompt_parts+=("Please use playbook macro: ${{ inputs.playbook-macro }}")
+        if [[ -n "$PLAYBOOK_MACRO" ]]; then
+          prompt_parts+=("Please use playbook macro: $PLAYBOOK_MACRO")
         fi
 
         # Add prompt from file if prompt-file is provided
-        if [[ -n "${{ inputs.prompt-file }}" ]]; then
-          echo "👀 Found 'prompt-file' input: ${{ inputs.prompt-file }}"
-          file_content=$(cat "${{ inputs.prompt-file }}")
+        if [[ -n "$PROMPT_FILE" ]]; then
+          echo "👀 Found 'prompt-file' input: $PROMPT_FILE"
+          file_content=$(cat "$PROMPT_FILE")
           if [[ -z "$file_content" ]]; then
-            echo "::error::The prompt-file '${{ inputs.prompt-file }}' is empty."
+            echo "::error::The prompt-file '$PROMPT_FILE' is empty."
             exit 1
           fi
           prompt_parts+=("$file_content")
         # Add custom prompt text if provided
-        elif [[ -n "${{ inputs.prompt-text }}" ]]; then
+        elif [[ -n "$PROMPT_TEXT" ]]; then
           echo "👀 Found 'prompt-text' input"
-          prompt_parts+=("${{ inputs.prompt-text }}")
+          prompt_parts+=("$PROMPT_TEXT")
         else
           echo "👀 No 'prompt-text' or 'prompt-file' input found"
         fi
@@ -353,6 +358,9 @@ runs:
       shell: bash
       env:
         DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
+        PROMPT_TEXT: ${{ inputs.prompt-text }}
+        PROMPT_FILE: ${{ inputs.prompt-file }}
+        PLAYBOOK_MACRO: ${{ inputs.playbook-macro }}
       run: |
         set -euo pipefail
 
@@ -364,9 +372,9 @@ runs:
         echo "dry-run: ${{ inputs.dry-run }}"
         echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
         echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
-        echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
-        echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "prompt-file: $([[ -n "${{ inputs.prompt-file }}" ]] && echo 'SET (${{ inputs.prompt-file }})' || echo 'NOT SET')"
+        echo "playbook-macro: $([[ -n "$PLAYBOOK_MACRO" ]] && echo 'SET ($PLAYBOOK_MACRO)' || echo 'NOT SET')"
+        echo "prompt-text: $([[ -n "$PROMPT_TEXT" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "prompt-file: $([[ -n "$PROMPT_FILE" ]] && echo 'SET ($PROMPT_FILE)' || echo 'NOT SET')"
         echo "advanced-mode: $([[ -n "${{ inputs.advanced-mode }}" ]] && echo 'SET (${{ inputs.advanced-mode }})' || echo 'NOT SET')"
         echo "session-links: $([[ -n "${{ inputs.session-links }}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "org-id: $([[ -n "${{ inputs.org-id }}" ]] && echo 'SET' || echo 'NOT SET')"
@@ -538,9 +546,9 @@ runs:
         automatic_tags=("gh-actions-trigger")
 
         # Add playbook tag if playbook-macro is provided
-        if [[ -n "${{ inputs.playbook-macro }}" ]]; then
+        if [[ -n "$PLAYBOOK_MACRO" ]]; then
           # Extract macro name (remove leading ! if present)
-          macro_name="${{ inputs.playbook-macro }}"
+          macro_name="$PLAYBOOK_MACRO"
           macro_name="${macro_name#!}"  # Remove leading ! if present
           automatic_tags+=("playbook-${macro_name}")
         fi

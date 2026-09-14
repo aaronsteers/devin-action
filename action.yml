@@ -509,6 +509,7 @@ runs:
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
         DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
+        PLAYBOOK_MACRO: ${{ inputs.playbook-macro }}
       run: |
         set -euo pipefail
 

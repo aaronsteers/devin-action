@@ -12,13 +12,34 @@ concurrency:
 
 jobs:
   draft_release:
-    name: Draft Release
+    name: Draft or Publish Release
     permissions:
       contents: write
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Create or update draft release
-        uses: aaronsteers/semantic-pr-release-drafter@v0.7.0
+      - name: Create or publish release
+        id: release-drafter
+        uses: aaronsteers/semantic-pr-release-drafter@v2.4.4
+        with:
+          # Pushes to main publish immediately; manual dispatches only refresh the draft.
+          publish: ${{ github.event_name == 'push' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Releases published with GITHUB_TOKEN do not fire tag-push workflows,
+      # so the major tag is moved here rather than by update-major-tags.yml.
+      - name: Check out repository
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Update major version tag
+        if: github.event_name == 'push'
+        env:
+          MAJOR_TAG: v${{ steps.release-drafter.outputs.major-version }}
+          TARGET_SHA: ${{ steps.release-drafter.outputs.resolved-sha }}
+        run: |
+          git tag -f "$MAJOR_TAG" "$TARGET_SHA"
+          git push -f origin "$MAJOR_TAG"

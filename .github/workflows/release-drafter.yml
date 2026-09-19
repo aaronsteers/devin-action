@@ -19,24 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create or publish release
-        id: release-drafter
         uses: aaronsteers/semantic-pr-release-drafter@v2.4.4
         with:
           # Pushes to main publish immediately; manual dispatches only refresh the draft.
           publish: ${{ github.event_name == 'push' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Move major version tag
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MAJOR_TAG: v${{ steps.release-drafter.outputs.major-version }}
-          TARGET_SHA: ${{ steps.release-drafter.outputs.resolved-sha }}
-        run: |
-          if gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$MAJOR_TAG" -f sha="$TARGET_SHA" -F force=true; then
-            echo "Moved $MAJOR_TAG -> $TARGET_SHA"
-          else
-            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$MAJOR_TAG" -f sha="$TARGET_SHA"
-            echo "Created $MAJOR_TAG -> $TARGET_SHA"
-          fi

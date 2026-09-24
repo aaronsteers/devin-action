@@ -118,41 +118,50 @@ runs:
       shell: bash
       env:
         DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
+        INPUT_REUSE_SESSION: ${{ inputs.reuse-session }}
+        INPUT_TAGS: ${{ inputs.tags }}
+        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
+        INPUT_PROMPT_FILE: ${{ inputs.prompt-file }}
+        INPUT_API_VERSION: ${{ inputs.api-version }}
+        INPUT_ADVANCED_MODE: ${{ inputs.advanced-mode }}
+        INPUT_SESSION_LINKS: ${{ inputs.session-links }}
+        INPUT_ORG_ID: ${{ inputs.org-id }}
+        INPUT_STRUCTURED_OUTPUT_REQUIRED: ${{ inputs.structured-output-required }}
       run: |
         set -euo pipefail
 
         # Check mutual exclusivity: reuse-session cannot be used with tags
-        if [[ -n "${{ inputs.reuse-session }}" && -n "${{ inputs.tags }}" ]]; then
+        if [[ -n "$INPUT_REUSE_SESSION" && -n "$INPUT_TAGS" ]]; then
           echo "::error::The 'reuse-session' and 'tags' inputs are mutually exclusive. When injecting a message into an existing session, tags cannot be specified."
           exit 1
         fi
 
         # Check mutual exclusivity: prompt-text and prompt-file
-        if [[ -n "${{ inputs.prompt-text }}" && -n "${{ inputs.prompt-file }}" ]]; then
+        if [[ -n "$INPUT_PROMPT_TEXT" && -n "$INPUT_PROMPT_FILE" ]]; then
           echo "::error::The 'prompt-text' and 'prompt-file' inputs are mutually exclusive. Use one or the other, not both."
           exit 1
         fi
 
         # Validate prompt-file exists if provided
-        if [[ -n "${{ inputs.prompt-file }}" ]]; then
-          if [[ ! -f "${{ inputs.prompt-file }}" ]]; then
-            echo "::error::The prompt-file '${{ inputs.prompt-file }}' does not exist."
+        if [[ -n "$INPUT_PROMPT_FILE" ]]; then
+          if [[ ! -f "$INPUT_PROMPT_FILE" ]]; then
+            echo "::error::The prompt-file '$INPUT_PROMPT_FILE' does not exist."
             exit 1
           fi
         fi
 
         # Validate api-version input
-        api_version="${{ inputs.api-version }}"
+        api_version="$INPUT_API_VERSION"
         if [[ "$api_version" != "v3" ]]; then
           echo "::error::Invalid api-version '$api_version'. Devin API v1 support has been removed; api-version must be 'v3'."
           exit 1
         fi
 
         # Validate v3 API inputs
-        advanced_mode="${{ inputs.advanced-mode }}"
-        session_links="${{ inputs.session-links }}"
-        org_id="${{ inputs.org-id }}"
-        structured_output_required="${{ inputs.structured-output-required }}"
+        advanced_mode="$INPUT_ADVANCED_MODE"
+        session_links="$INPUT_SESSION_LINKS"
+        org_id="$INPUT_ORG_ID"
+        structured_output_required="$INPUT_STRUCTURED_OUTPUT_REQUIRED"
 
         # Determine effective advanced mode (session-links implies analyze)
         if [[ -z "$advanced_mode" && -n "$session_links" ]]; then
@@ -197,7 +206,7 @@ runs:
           if [[ -z "$(printf '%s' "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" | tr -d '[:space:]')" ]]; then
             echo "::warning::The 'structured-output-required' input was provided without 'structured-output-schema'. The v3 API flag will still be sent, but Devin will not have a schema to validate against."
           fi
-          if [[ -n "${{ inputs.reuse-session }}" ]]; then
+          if [[ -n "$INPUT_REUSE_SESSION" ]]; then
             echo "::warning::The 'structured-output-required' input is only applied when creating a new v3 session; it will be ignored because 'reuse-session' is set."
           fi
         fi
@@ -229,7 +238,7 @@ runs:
           # Persist normalized compact JSON for the Create Session step.
           schema_json_compact=$(printf '%s' "$schema_json" | jq -c '.')
           echo "DEVIN_STRUCTURED_OUTPUT_SCHEMA_JSON=${schema_json_compact}" >> "$GITHUB_ENV"
-          if [[ -n "${{ inputs.reuse-session }}" ]]; then
+          if [[ -n "$INPUT_REUSE_SESSION" ]]; then
             echo "::warning::The 'structured-output-schema' input is only applied when creating a new session; it will be ignored because 'reuse-session' is set."
           fi
         fi
@@ -242,6 +251,12 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        INPUT_COMMENT_ID: ${{ inputs.comment-id }}
+        INPUT_ISSUE_NUMBER: ${{ inputs.issue-number }}
+        INPUT_PLAYBOOK_MACRO: ${{ inputs.playbook-macro }}
+        INPUT_PROMPT_FILE: ${{ inputs.prompt-file }}
+        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
+        GITHUB_REPOSITORY_VALUE: ${{ github.repository }}
       run: |
         set -euo pipefail
 
@@ -249,9 +264,9 @@ runs:
         prompt_parts=()
 
         # Add comment context if comment-id is provided
-        if [[ -n "${{ inputs.comment-id }}" ]]; then
+        if [[ -n "$INPUT_COMMENT_ID" ]]; then
           echo "Fetching comment context..."
-          COMMENT_JSON=$(gh api repos/${{ github.repository }}/issues/comments/${{ inputs.comment-id }})
+          COMMENT_JSON=$(gh api "repos/${GITHUB_REPOSITORY_VALUE}/issues/comments/${INPUT_COMMENT_ID}")
           comment_body=$(jq -r .body <<< "$COMMENT_JSON")
           comment_author=$(jq -r .user.login <<< "$COMMENT_JSON")
           comment_url=$(jq -r .html_url <<< "$COMMENT_JSON")
@@ -265,35 +280,35 @@ runs:
         fi
 
         # Add issue context if issue-number is provided
-        if [[ -n "${{ inputs.issue-number }}" ]]; then
+        if [[ -n "$INPUT_ISSUE_NUMBER" ]]; then
           echo "Fetching issue context..."
-          ISSUE_JSON=$(gh api repos/${{ github.repository }}/issues/${{ inputs.issue-number }})
+          ISSUE_JSON=$(gh api "repos/${GITHUB_REPOSITORY_VALUE}/issues/${INPUT_ISSUE_NUMBER}")
           issue_title=$(jq -r .title <<< "$ISSUE_JSON")
           issue_author=$(jq -r .user.login <<< "$ISSUE_JSON")
-          issue_url="https://github.com/${{ github.repository }}/issues/${{ inputs.issue-number }}"
+          issue_url="https://github.com/${GITHUB_REPOSITORY_VALUE}/issues/${INPUT_ISSUE_NUMBER}"
 
-          prompt_parts+=("Issue #${{ inputs.issue-number }} by @${issue_author}: ${issue_title}")
+          prompt_parts+=("Issue #${INPUT_ISSUE_NUMBER} by @${issue_author}: ${issue_title}")
           prompt_parts+=("Issue URL: ${issue_url}")
         fi
 
         # Add playbook macro reference if playbook-macro is provided
-        if [[ -n "${{ inputs.playbook-macro }}" ]]; then
-          prompt_parts+=("Please use playbook macro: ${{ inputs.playbook-macro }}")
+        if [[ -n "$INPUT_PLAYBOOK_MACRO" ]]; then
+          prompt_parts+=("Please use playbook macro: $INPUT_PLAYBOOK_MACRO")
         fi
 
         # Add prompt from file if prompt-file is provided
-        if [[ -n "${{ inputs.prompt-file }}" ]]; then
-          echo "👀 Found 'prompt-file' input: ${{ inputs.prompt-file }}"
-          file_content=$(cat "${{ inputs.prompt-file }}")
+        if [[ -n "$INPUT_PROMPT_FILE" ]]; then
+          echo "👀 Found 'prompt-file' input: $INPUT_PROMPT_FILE"
+          file_content=$(cat "$INPUT_PROMPT_FILE")
           if [[ -z "$file_content" ]]; then
-            echo "::error::The prompt-file '${{ inputs.prompt-file }}' is empty."
+            echo "::error::The prompt-file '$INPUT_PROMPT_FILE' is empty."
             exit 1
           fi
-          prompt_parts+=("$file_content")
+        prompt_parts+=("$file_content")
         # Add custom prompt text if provided
-        elif [[ -n "${{ inputs.prompt-text }}" ]]; then
+        elif [[ -n "$INPUT_PROMPT_TEXT" ]]; then
           echo "👀 Found 'prompt-text' input"
-          prompt_parts+=("${{ inputs.prompt-text }}")
+          prompt_parts+=("$INPUT_PROMPT_TEXT")
         else
           echo "👀 No 'prompt-text' or 'prompt-file' input found"
         fi
@@ -321,15 +336,15 @@ runs:
 
         # Save prompt to output (properly escaped for safe YAML/JSON processing)
         # Use base64 encoding to safely handle any special characters including quotes
-        echo "prompt<<EOF" >> $GITHUB_OUTPUT
+        echo "prompt<<EOF" >> "$GITHUB_OUTPUT"
         printf '%s' "$final_prompt" | base64 | tr -d '\n' >> $GITHUB_OUTPUT
-        echo >> $GITHUB_OUTPUT  # Add newline before EOF
-        echo "EOF" >> $GITHUB_OUTPUT
+        echo >> "$GITHUB_OUTPUT"  # Add newline before EOF
+        echo "EOF" >> "$GITHUB_OUTPUT"
 
         # Also save a human-readable version for debugging
-        echo "prompt_readable<<EOF" >> $GITHUB_OUTPUT
-        printf '%s\n' "$final_prompt" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        echo "prompt_readable<<EOF" >> "$GITHUB_OUTPUT"
+        printf '%s\n' "$final_prompt" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
 
     - name: Generate run link
       id: vars
@@ -353,35 +368,52 @@ runs:
       shell: bash
       env:
         DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
+        INPUT_REUSE_SESSION: ${{ inputs.reuse-session }}
+        INPUT_TAGS: ${{ inputs.tags }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_COMMENT_ID: ${{ inputs.comment-id }}
+        INPUT_ISSUE_NUMBER: ${{ inputs.issue-number }}
+        INPUT_PLAYBOOK_MACRO: ${{ inputs.playbook-macro }}
+        INPUT_PROMPT_TEXT: ${{ inputs.prompt-text }}
+        INPUT_PROMPT_FILE: ${{ inputs.prompt-file }}
+        INPUT_ADVANCED_MODE: ${{ inputs.advanced-mode }}
+        INPUT_SESSION_LINKS: ${{ inputs.session-links }}
+        INPUT_ORG_ID: ${{ inputs.org-id }}
+        INPUT_MAX_ACU_LIMIT: ${{ inputs.max-acu-limit }}
+        INPUT_PLAYBOOK_ID: ${{ inputs.playbook-id }}
+        INPUT_CHILD_PLAYBOOK_ID: ${{ inputs.child-playbook-id }}
+        INPUT_BYPASS_APPROVAL: ${{ inputs.bypass-approval }}
+        INPUT_STRUCTURED_OUTPUT_REQUIRED: ${{ inputs.structured-output-required }}
+        INPUT_API_VERSION: ${{ inputs.api-version }}
       run: |
         set -euo pipefail
 
         # ===== DEBUG: Print input summary =====
         echo "::group::🔍 Input Summary"
-        echo "Mode: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'REUSE SESSION (inject message)' || echo 'CREATE NEW SESSION')"
-        echo "reuse-session: $([[ -n "${{ inputs.reuse-session }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "tags: $([[ -n "${{ inputs.tags }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "dry-run: ${{ inputs.dry-run }}"
-        echo "comment-id: $([[ -n "${{ inputs.comment-id }}" ]] && echo 'SET (${{ inputs.comment-id }})' || echo 'NOT SET')"
-        echo "issue-number: $([[ -n "${{ inputs.issue-number }}" ]] && echo 'SET (${{ inputs.issue-number }})' || echo 'NOT SET')"
-        echo "playbook-macro: $([[ -n "${{ inputs.playbook-macro }}" ]] && echo 'SET (${{ inputs.playbook-macro }})' || echo 'NOT SET')"
-        echo "prompt-text: $([[ -n "${{ inputs.prompt-text }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "prompt-file: $([[ -n "${{ inputs.prompt-file }}" ]] && echo 'SET (${{ inputs.prompt-file }})' || echo 'NOT SET')"
-        echo "advanced-mode: $([[ -n "${{ inputs.advanced-mode }}" ]] && echo 'SET (${{ inputs.advanced-mode }})' || echo 'NOT SET')"
-        echo "session-links: $([[ -n "${{ inputs.session-links }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "org-id: $([[ -n "${{ inputs.org-id }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "max-acu-limit: $([[ -n "${{ inputs.max-acu-limit }}" ]] && echo 'SET (${{ inputs.max-acu-limit }})' || echo 'NOT SET')"
-        echo "playbook-id: $([[ -n "${{ inputs.playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "child-playbook-id: $([[ -n "${{ inputs.child-playbook-id }}" ]] && echo 'SET' || echo 'NOT SET')"
-        echo "bypass-approval: ${{ inputs.bypass-approval }}"
-        echo "structured-output-required: $([[ -n "${{ inputs.structured-output-required }}" ]] && echo 'SET (${{ inputs.structured-output-required }})' || echo 'NOT SET')"
-        echo "api-version: ${{ inputs.api-version }}"
+        echo "Mode: $([[ -n "$INPUT_REUSE_SESSION" ]] && echo 'REUSE SESSION (inject message)' || echo 'CREATE NEW SESSION')"
+        echo "reuse-session: $([[ -n "$INPUT_REUSE_SESSION" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "tags: $([[ -n "$INPUT_TAGS" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "dry-run: $INPUT_DRY_RUN"
+        echo "comment-id: $([[ -n "$INPUT_COMMENT_ID" ]] && echo "SET ($INPUT_COMMENT_ID)" || echo 'NOT SET')"
+        echo "issue-number: $([[ -n "$INPUT_ISSUE_NUMBER" ]] && echo "SET ($INPUT_ISSUE_NUMBER)" || echo 'NOT SET')"
+        echo "playbook-macro: $([[ -n "$INPUT_PLAYBOOK_MACRO" ]] && echo "SET ($INPUT_PLAYBOOK_MACRO)" || echo 'NOT SET')"
+        echo "prompt-text: $([[ -n "$INPUT_PROMPT_TEXT" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "prompt-file: $([[ -n "$INPUT_PROMPT_FILE" ]] && echo "SET ($INPUT_PROMPT_FILE)" || echo 'NOT SET')"
+        echo "advanced-mode: $([[ -n "$INPUT_ADVANCED_MODE" ]] && echo "SET ($INPUT_ADVANCED_MODE)" || echo 'NOT SET')"
+        echo "session-links: $([[ -n "$INPUT_SESSION_LINKS" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "org-id: $([[ -n "$INPUT_ORG_ID" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "max-acu-limit: $([[ -n "$INPUT_MAX_ACU_LIMIT" ]] && echo "SET ($INPUT_MAX_ACU_LIMIT)" || echo 'NOT SET')"
+        echo "playbook-id: $([[ -n "$INPUT_PLAYBOOK_ID" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "child-playbook-id: $([[ -n "$INPUT_CHILD_PLAYBOOK_ID" ]] && echo 'SET' || echo 'NOT SET')"
+        echo "bypass-approval: $INPUT_BYPASS_APPROVAL"
+        echo "structured-output-required: $([[ -n "$INPUT_STRUCTURED_OUTPUT_REQUIRED" ]] && echo "SET ($INPUT_STRUCTURED_OUTPUT_REQUIRED)" || echo 'NOT SET')"
+        echo "api-version: $INPUT_API_VERSION"
         echo "structured-output-schema: $([[ -n "${DEVIN_STRUCTURED_OUTPUT_SCHEMA:-}" ]] && echo 'SET' || echo 'NOT SET')"
         echo "::endgroup::"
 
         # Parse reuse-session input if provided
-        if [[ -n "${{ inputs.reuse-session }}" ]]; then
-          reuse_input="${{ inputs.reuse-session }}"
+        if [[ -n "$INPUT_REUSE_SESSION" ]]; then
+          reuse_input="$INPUT_REUSE_SESSION"
           
           echo "::group::🔄 Session Reuse Configuration"
           echo "Raw reuse-session input: $reuse_input"
@@ -411,8 +443,8 @@ runs:
           echo "::endgroup::"
           
           # Output resolved values
-          echo "session-id=$session_id" >> $GITHUB_OUTPUT
-          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-id=$session_id" >> "$GITHUB_OUTPUT"
+          echo "session-url=$session_url" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Inject message into existing session
@@ -422,12 +454,16 @@ runs:
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
         DEVIN_ORG_ID: ${{ inputs.org-id }}
+        RESOLVED_SESSION_ID: ${{ steps.resolve-vars.outputs.session-id }}
+        RESOLVED_SESSION_URL: ${{ steps.resolve-vars.outputs.session-url }}
+        BUILD_PROMPT: ${{ steps.build-prompt.outputs.prompt }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
       run: |
         set -euo pipefail
 
         # Get resolved session vars
-        session_id="${{ steps.resolve-vars.outputs.session-id }}"
-        session_url="${{ steps.resolve-vars.outputs.session-url }}"
+        session_id="$RESOLVED_SESSION_ID"
+        session_url="$RESOLVED_SESSION_URL"
 
         echo "Injecting message into existing Devin session..."
         echo "Session ID: $session_id"
@@ -435,7 +471,7 @@ runs:
         echo "Org ID: ${DEVIN_ORG_ID:-(not set)}"
 
         # Decode the base64-encoded prompt
-        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
+        decoded_prompt=$(printf '%s' "$BUILD_PROMPT" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
         echo "Prompt length: ${#decoded_prompt} characters"
 
         # Prepare the message API request payload
@@ -449,14 +485,14 @@ runs:
         cat devin_request.json | jq
         echo "::endgroup::"
 
-        if [[ "${{ inputs.dry-run }}" == 'true' ]]; then
+        if [[ "$INPUT_DRY_RUN" == 'true' ]]; then
           echo "👀 Dry run enabled, exiting early before making API call"
           echo "::group::📤 Action Outputs (dry-run)"
           echo "session-id=$session_id"
           echo "session-url=$session_url"
           echo "::endgroup::"
-          echo "session-id=$session_id" >> $GITHUB_OUTPUT
-          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-id=$session_id" >> "$GITHUB_OUTPUT"
+          echo "session-url=$session_url" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
@@ -486,8 +522,8 @@ runs:
           echo "session-id=$session_id"
           echo "session-url=$session_url"
           echo "::endgroup::"
-          echo "session-id=$session_id" >> $GITHUB_OUTPUT
-          echo "session-url=$session_url" >> $GITHUB_OUTPUT
+          echo "session-id=$session_id" >> "$GITHUB_OUTPUT"
+          echo "session-url=$session_url" >> "$GITHUB_OUTPUT"
         else
           echo "::error::Failed to inject message into Devin session. HTTP Status: $http_status"
           echo "Response: $response_body"
@@ -501,17 +537,31 @@ runs:
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
         DEVIN_STRUCTURED_OUTPUT_SCHEMA: ${{ inputs.structured-output-schema }}
+        INPUT_ADVANCED_MODE: ${{ inputs.advanced-mode }}
+        INPUT_SESSION_LINKS: ${{ inputs.session-links }}
+        INPUT_ORG_ID: ${{ inputs.org-id }}
+        INPUT_MAX_ACU_LIMIT: ${{ inputs.max-acu-limit }}
+        INPUT_PLAYBOOK_ID: ${{ inputs.playbook-id }}
+        INPUT_CHILD_PLAYBOOK_ID: ${{ inputs.child-playbook-id }}
+        INPUT_BYPASS_APPROVAL: ${{ inputs.bypass-approval }}
+        INPUT_STRUCTURED_OUTPUT_REQUIRED: ${{ inputs.structured-output-required }}
+        INPUT_PLAYBOOK_MACRO: ${{ inputs.playbook-macro }}
+        INPUT_TAGS: ${{ inputs.tags }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        BUILD_PROMPT: ${{ steps.build-prompt.outputs.prompt }}
+        GITHUB_REPOSITORY_VALUE: ${{ github.repository }}
+        GITHUB_REF_NAME_VALUE: ${{ github.ref_name }}
       run: |
         set -euo pipefail
 
-        advanced_mode="${{ inputs.advanced-mode }}"
-        session_links_input="${{ inputs.session-links }}"
-        org_id="${{ inputs.org-id }}"
-        max_acu_limit="${{ inputs.max-acu-limit }}"
-        playbook_id="${{ inputs.playbook-id }}"
-        child_playbook_id="${{ inputs.child-playbook-id }}"
-        bypass_approval="${{ inputs.bypass-approval }}"
-        structured_output_required="${{ inputs.structured-output-required }}"
+        advanced_mode="$INPUT_ADVANCED_MODE"
+        session_links_input="$INPUT_SESSION_LINKS"
+        org_id="$INPUT_ORG_ID"
+        max_acu_limit="$INPUT_MAX_ACU_LIMIT"
+        playbook_id="$INPUT_PLAYBOOK_ID"
+        child_playbook_id="$INPUT_CHILD_PLAYBOOK_ID"
+        bypass_approval="$INPUT_BYPASS_APPROVAL"
+        structured_output_required="$INPUT_STRUCTURED_OUTPUT_REQUIRED"
 
         # session-links without advanced-mode defaults to analyze
         if [[ -z "$advanced_mode" && -n "$session_links_input" ]]; then
@@ -524,30 +574,30 @@ runs:
         echo "API endpoint: POST /v3/organizations/{org_id}/sessions"
         echo "Advanced mode: $advanced_mode"
         echo "Organization ID: $org_id"
-        echo "Repository: ${{ github.repository }}"
-        echo "Branch: ${{ github.ref_name }}"
+        echo "Repository: $GITHUB_REPOSITORY_VALUE"
+        echo "Branch: $GITHUB_REF_NAME_VALUE"
         echo "::endgroup::"
 
         echo "Creating new Devin session..."
 
         # Decode the base64-encoded prompt
-        decoded_prompt=$(echo "${{ steps.build-prompt.outputs.prompt }}" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
+        decoded_prompt=$(printf '%s' "$BUILD_PROMPT" | base64 -d || { echo "Error: Failed to decode base64 prompt"; exit 1; })
         echo "Prompt length: ${#decoded_prompt} characters"
 
         # Build automatic tags
         automatic_tags=("gh-actions-trigger")
 
         # Add playbook tag if playbook-macro is provided
-        if [[ -n "${{ inputs.playbook-macro }}" ]]; then
+        if [[ -n "$INPUT_PLAYBOOK_MACRO" ]]; then
           # Extract macro name (remove leading ! if present)
-          macro_name="${{ inputs.playbook-macro }}"
+          macro_name="$INPUT_PLAYBOOK_MACRO"
           macro_name="${macro_name#!}"  # Remove leading ! if present
           automatic_tags+=("playbook-${macro_name}")
         fi
 
         # Process additional tags input if provided (supports both CSV and line-delimited)
         additional_tags=()
-        if [[ -n "${{ inputs.tags }}" ]]; then
+        if [[ -n "$INPUT_TAGS" ]]; then
           # Handle both CSV and line-delimited formats
           # First split by newlines, then by commas for each line
           while IFS= read -r line; do
@@ -562,7 +612,7 @@ runs:
                 fi
               done
             fi
-          done <<< "${{ inputs.tags }}"
+          done <<< "$INPUT_TAGS"
         fi
 
         # Combine automatic and additional tags
@@ -625,7 +675,7 @@ runs:
         cat devin_request.json | jq
         echo "::endgroup::"
 
-        if [[ "${{ inputs.dry-run }}" == 'true' ]]; then
+        if [[ "$INPUT_DRY_RUN" == 'true' ]]; then
           echo "👀 Dry run enabled, exiting early before making API call"
           exit 0
         fi
@@ -672,8 +722,8 @@ runs:
         echo "session-url=$session_url"
         echo "::endgroup::"
 
-        echo "session-id=$session_id" >> $GITHUB_OUTPUT
-        echo "session-url=$session_url" >> $GITHUB_OUTPUT
+        echo "session-id=$session_id" >> "$GITHUB_OUTPUT"
+        echo "session-url=$session_url" >> "$GITHUB_OUTPUT"
 
     - name: Wait for session status
       id: wait-for-status
@@ -681,24 +731,27 @@ runs:
       shell: bash
       env:
         DEVIN_TOKEN: ${{ inputs.devin-token }}
+        SESSION_ID: ${{ steps.inject-message.outputs.session-id || steps.create-session.outputs.session-id || steps.resolve-vars.outputs.session-id }}
+        INPUT_ORG_ID: ${{ inputs.org-id }}
+        INPUT_WAIT_MINUTES_MAX: ${{ inputs.wait-minutes-max }}
       run: |
         set -euo pipefail
 
         # Resolve the session ID from whichever earlier step produced it
-        session_id="${{ steps.inject-message.outputs.session-id || steps.create-session.outputs.session-id || steps.resolve-vars.outputs.session-id }}"
+        session_id="$SESSION_ID"
         if [[ -z "$session_id" ]]; then
           echo "::error::No session ID available for polling. Ensure a session was created or reused."
           exit 1
         fi
 
-        org_id="${{ inputs.org-id }}"
+        org_id="$INPUT_ORG_ID"
         devin_id="devin-${session_id}"
 
         # Internal defaults
         poll_interval=30
         max_api_errors=3
         # Derive max polls from user-configurable wait-minutes-max
-        wait_minutes="${{ inputs.wait-minutes-max }}"
+        wait_minutes="$INPUT_WAIT_MINUTES_MAX"
         if ! [[ "$wait_minutes" =~ ^[0-9]+$ ]] || (( wait_minutes <= 0 )); then
           echo "::error::wait-minutes-max must be a positive integer, got '$wait_minutes'."
           exit 1
